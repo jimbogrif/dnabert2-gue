@@ -3,8 +3,9 @@
 Two modes:
 
 --mode calibrate [--lrs ...]
-    3 datasets x lrs x seed 42 x the ``attn`` variant (9 runs at the default
-    grid, ~11 min) -> results/lora_calibration.csv and
+    3 datasets x lrs x seed 42 x the ``attn`` variant (15 runs at the default
+    grid, ~1.6 h expected) -> results/lora_calibration.csv,
+    results/lora_calibration_histories.csv.gz and
     figures/lora_calibration.png. Selects the lr with the highest mean dev MCC
     over the three datasets, then checks the decision gate below. Never starts
     the full run.
@@ -13,8 +14,11 @@ Two modes:
     0.6528 on EMP__H3 while still climbing, against a frozen-MLP 0.7215 +/-
     0.0064 on the same dataset -- the one validated setting loses to the frozen
     probe. 1e-4 is also the bottom of the 1e-4..5e-4 band conventional for
-    LoRA, and batch is now 4x larger, so the grid {1e-4, 3e-4, 1e-3} spans that
-    band and its batch-scaled range. The datasets span the size range:
+    LoRA, and batch is now 4x larger, so the grid spans that band, its
+    batch-scaled range and two points above it: {1e-4, 3e-4, 1e-3, 3e-3, 1e-2}.
+    A first pass capped at 5 epochs put the optimum at the 1e-3 edge, but every
+    run there hit the cap, so that ranking measured how far each rate got in a
+    fixed budget rather than how good it is; the grid is rerun under patience. The datasets span the size range:
     mouse__3 (1,904 train), prom__prom_core_tata (4,904), EMP__H3K4me3 (29,439).
 
     If the chosen lr is at a grid edge, extend the grid one point in that
@@ -22,15 +26,17 @@ Two modes:
     recalibrate before the full run, as the LR arm's widened C grid did.
 
     Decision gate (exit status 2 if any trips -- report, do not run full):
-      - best_epoch is the final epoch on >=2 of the 3 datasets at the chosen
-        lr: LORA_MAX_EPOCHS is too few;
+      - the epoch cap bound (patience never fired) on >=2 of the 3 datasets at
+        the chosen lr: LORA_MAX_EPOCHS is too few;
       - the chosen lr is at a grid edge;
       - every lr leaves dev MCC below the best frozen dev MCC on all three
         datasets.
 
 --mode full --lr LR [--variant {attn,attn_mlp,both}]
-    26 datasets x seeds (42, 43, 44) x variants = 156 runs for ``both``,
-    ~6.4 h. Per-run rows -> results/lora_results.csv, per-epoch curves ->
+    26 datasets x seeds (42, 43, 44) x variants = 156 runs for ``both``.
+    Cost depends on where patience stops each run: ~11 h if runs average 10
+    epochs, 44 h worst case if none early-stops at LORA_MAX_EPOCHS=40.
+    EMP is 76% of the work (500 bp at 459 seq/s vs 3,831 at 70 bp). Per-run rows -> results/lora_results.csv, per-epoch curves ->
     results/lora_histories.csv.gz (local diagnostics, gitignored). Both
     variants run at the lr calibrated for ``attn``.
 
@@ -40,7 +46,7 @@ saved. Requires a CUDA GPU.
 
 Then run 06_build_tables.py, which picks up lora_results.csv.
 
-Usage: 05_lora_sweep.py --mode calibrate [--lrs 1e-4 3e-4 1e-3]
+Usage: 05_lora_sweep.py --mode calibrate [--lrs 1e-4 3e-4 1e-3 3e-3 1e-2]
        05_lora_sweep.py --mode full --lr 3e-4 [--variant both]
 """
 
@@ -57,6 +63,7 @@ import dnabert2_gue as SL
 from dnabert2_gue.lora import RESULT_COLS
 
 CALIB = os.path.join(SL.RESULTS_DIR, "lora_calibration.csv")
+CALIB_HIST = os.path.join(SL.RESULTS_DIR, "lora_calibration_histories.csv.gz")
 OUT = os.path.join(SL.RESULTS_DIR, "lora_results.csv")
 HIST = os.path.join(SL.RESULTS_DIR, "lora_histories.csv.gz")
 FIG = os.path.join(SL.FIGURES_DIR, "lora_calibration.png")
@@ -130,7 +137,7 @@ def calibrate():
     lrs = sorted(set(args.lrs))
     plan = [(d, CALIB_SEED, CALIB_VARIANT, lr)
             for d in SL.LORA_CALIB_DATASETS for lr in lrs]
-    cal = run_plan(plan, CALIB)
+    cal = run_plan(plan, CALIB, CALIB_HIST)
 
     # at_grid_edge relative to every lr calibrated so far (the grid may have
     # been extended by an earlier --lrs call).
@@ -183,11 +190,11 @@ def calibrate():
     # ---- decision gate --------------------------------------------------------
     gate = []
     at_chosen = cal[cal.lr == chosen]
-    n_last = int((at_chosen.best_epoch == at_chosen.max_epochs).sum())
-    if n_last >= 2:
-        gate.append(f"best_epoch is the final epoch on {n_last}/3 datasets at "
-                    f"lr={chosen:g}: LORA_MAX_EPOCHS={SL.LORA_MAX_EPOCHS} looks too "
-                    "few. Ask before raising it.")
+    n_capped = int((~at_chosen.early_stopped.astype(bool)).sum())
+    if n_capped >= 2:
+        gate.append(f"the epoch cap bound on {n_capped}/3 datasets at lr={chosen:g} "
+                    f"(patience {SL.LORA_PATIENCE} never fired within "
+                    f"LORA_MAX_EPOCHS={SL.LORA_MAX_EPOCHS}). Ask before raising it.")
     if at_edge:
         step = np.sqrt(10)
         nxt = grid[0] / step if chosen == grid[0] else grid[-1] * step

@@ -86,6 +86,7 @@ if lora is not None:
         + ", optimizer=" + lora["optimizer"].astype(str)
         + ", precision=" + lora["precision"].astype(str)
         + ", max_epochs=" + lora["max_epochs"].astype(str)
+        + ", patience=" + lora["patience"].astype(str)
         + ", warmup_ratio=" + lora["warmup_ratio"].astype(str)
         + ", eval=" + lora["eval_cadence"].astype(str))
 

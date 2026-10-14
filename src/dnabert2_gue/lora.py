@@ -8,6 +8,10 @@ frozen-probe tables on equal terms:
   - ``lr`` is an explicit argument and a recorded column;
   - dev is evaluated once per epoch, not every 200 steps, so every run gets the
     same number of selection draws regardless of dataset size;
+  - training stops on dev patience rather than at a fixed epoch count, matching
+    the MLP arm's ``train_model``. A 5-epoch cap was tried first and bound on
+    every calibration dataset, which is what a budget rather than a backstop
+    looks like; ``LORA_MAX_EPOCHS`` is now the backstop and patience decides;
   - warmup is a ratio of total steps, not a fixed 50 steps;
   - bf16 autocast on CUDA at batch 128 (no GradScaler: bf16 has fp32's range);
   - parameter counts and matched modules are returned, not printed;
@@ -38,9 +42,9 @@ import os
 import pandas as pd
 
 from .config import (DATASET_TASK, LORA_ALPHA, LORA_BATCH, LORA_DROPOUT,
-                     LORA_MAX_EPOCHS, LORA_MAX_LENGTH, LORA_R, LORA_VARIANTS,
-                     LORA_WARMUP_RATIO, LORA_WEIGHT_DECAY, MODEL_NAME, SPLITS,
-                     manifest)
+                     LORA_MAX_EPOCHS, LORA_MAX_LENGTH, LORA_PATIENCE, LORA_R,
+                     LORA_VARIANTS, LORA_WARMUP_RATIO, LORA_WEIGHT_DECAY,
+                     MODEL_NAME, SPLITS, manifest)
 
 MODULES_TO_SAVE = ["classifier", "pooler"]
 
@@ -52,7 +56,7 @@ ATTN_TOTAL = 117_957_124
 # Columns of results/lora_results.csv, in order (wall_s attached by the sweep).
 RESULT_COLS = [
     "dataset", "task", "variant", "pool", "layer", "seed", "lr", "batch_size",
-    "max_epochs", "epochs_run", "best_epoch", "early_stopped", "dev_mcc",
+    "max_epochs", "patience", "epochs_run", "best_epoch", "early_stopped", "dev_mcc",
     "test_mcc", "lora_r", "lora_alpha", "lora_dropout", "target_modules",
     "modules_to_save", "trainable_params", "total_params", "pct_trainable",
     "warmup_steps", "warmup_ratio", "weight_decay", "optimizer", "precision",
@@ -153,11 +157,20 @@ def train_lora(model,
                device,
                lr,
                epochs=LORA_MAX_EPOCHS,
+               patience=LORA_PATIENCE,
                warmup_ratio=LORA_WARMUP_RATIO,
                weight_decay=LORA_WEIGHT_DECAY,
                debug=False):
     """ Train a PEFT model on a train split, evaluating dev once per epoch.
-    Return the model (best-dev state restored), best MCC, best epoch, history.
+
+    Stops after ``patience`` consecutive epochs without a dev improvement, as
+    the MLP arm's ``train_model`` does; ``epochs`` is a backstop, not a budget.
+    The LR schedule is still built over ``len(train_loader) * epochs``, so an
+    early-stopped run simply never reaches the tail of the decay — the same
+    behaviour early stopping has in any warmup+decay setup.
+
+    Return (model with best-dev state restored, best MCC, best epoch, history,
+    early_stopped).
     """
     import torch
     import torch.nn as nn
@@ -170,6 +183,7 @@ def train_lora(model,
         opt, warmup_steps(warmup_ratio, total_steps), total_steps)
     crit = nn.CrossEntropyLoss()
     best_mcc, best_epoch, history = -float("inf"), 0, []
+    stale, early_stopped = 0, False
     # Checkpoint before lora in case dataset is tiny
     best_state = {n: p.detach().cpu().clone()
                   for n, p in model.named_parameters() if p.requires_grad}
@@ -191,14 +205,20 @@ def train_lora(model,
         mcc = evaluate(model, dev_loader, device)
         history.append({"epoch": epoch + 1, "train_loss": train_loss, "dev_mcc": mcc})
         if mcc > best_mcc:   # save only the trainable weights (small)
-            best_mcc, best_epoch = mcc, epoch + 1
+            best_mcc, best_epoch, stale = mcc, epoch + 1, 0
             best_state = {n: p.detach().cpu().clone()
                           for n, p in model.named_parameters() if p.requires_grad}
+        else:
+            stale += 1
         if debug:
-            print(f"epoch {epoch + 1}  loss {train_loss:.4f}  dev MCC {mcc:.4f}", flush=True)
+            print(f"epoch {epoch + 1}  loss {train_loss:.4f}  dev MCC {mcc:.4f}"
+                  f"{'' if stale == 0 else f'  (stale {stale}/{patience})'}", flush=True)
+        if stale >= patience:
+            early_stopped = True
+            break
 
     model.load_state_dict(best_state, strict=False)   # restore best adapters + head
-    return model, best_mcc, best_epoch, history
+    return model, best_mcc, best_epoch, history, early_stopped
 
 
 # Evaluation protocol
@@ -219,6 +239,7 @@ def evaluate(model, loader, device):
 def run_lora(dataset, seed, lr, variant="attn",
              r=LORA_R, alpha=LORA_ALPHA, lora_dropout=LORA_DROPOUT,
              batch_size=LORA_BATCH, max_epochs=LORA_MAX_EPOCHS,
+             patience=LORA_PATIENCE,
              warmup_ratio=LORA_WARMUP_RATIO, weight_decay=LORA_WEIGHT_DECAY,
              max_length=LORA_MAX_LENGTH, device=None, debug=False):
     """One LoRA fine-tuning run; returns (result_dict, history).
@@ -255,9 +276,10 @@ def run_lora(dataset, seed, lr, variant="attn",
     model, info = build_lora_model(n_classes, target_modules, r, alpha, lora_dropout)
     model = model.to(device)
     try:
-        model, dev_mcc, best_epoch, history = train_lora(
+        model, dev_mcc, best_epoch, history, early_stopped = train_lora(
             model, train_loader, dev_loader, device, lr, epochs=max_epochs,
-            warmup_ratio=warmup_ratio, weight_decay=weight_decay, debug=debug)
+            patience=patience, warmup_ratio=warmup_ratio,
+            weight_decay=weight_decay, debug=debug)
         test_mcc = evaluate(model, test_loader, device)   # scored once, best-dev state
     finally:
         del model
@@ -268,8 +290,9 @@ def run_lora(dataset, seed, lr, variant="attn",
         "dataset": dataset, "task": DATASET_TASK[dataset], "variant": variant,
         "pool": "cls-trained", "layer": 0, "seed": seed, "lr": lr,
         "batch_size": batch_size, "max_epochs": max_epochs,
+        "patience": patience,
         "epochs_run": len(history), "best_epoch": best_epoch,
-        "early_stopped": False,           # fixed epochs, no patience
+        "early_stopped": early_stopped,   # False here means the cap bound
         "dev_mcc": float(dev_mcc), "test_mcc": float(test_mcc),
         "lora_r": r, "lora_alpha": alpha, "lora_dropout": lora_dropout,
         "target_modules": "|".join(target_modules),
