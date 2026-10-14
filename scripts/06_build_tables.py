@@ -9,8 +9,11 @@ LoRA rows are read from results/lora_results.csv only if it exists, so the
 pipeline runs before the fine-tuning arm has. Fine-tuning has no readout layer
 and no free pooling choice, so LoRA rows carry the sentinels ``layer = 0``
 (real layers are 1-12), ``layer_role = "finetuned"`` and
-``pool = "cls-trained"``. Append new runs to lora_results.csv, never to
-history_table.csv -- the tables here are regenerated wholesale.
+``pool = "cls-trained"``. Each LoRA variant gets its own model_type
+("LoRA-attn", "LoRA-attn+mlp") so the seed aggregate, keyed on model_type,
+never averages the two variants together. Append new runs to
+lora_results.csv, never to history_table.csv -- the tables here are
+regenerated wholesale.
 """
 
 import os
@@ -60,7 +63,10 @@ mlp["hyperparams"] = (
 
 # ---- LoRA rows (optional third arm) ----------------------------------------
 if lora is not None:
-    lora["model_type"] = "LoRA"
+    LORA_TYPES = {"attn": "LoRA-attn", "attn_mlp": "LoRA-attn+mlp"}
+    lora["model_type"] = lora["variant"].map(LORA_TYPES)
+    assert lora["model_type"].notna().all(), \
+        f"unknown LoRA variant(s): {set(lora.variant) - set(LORA_TYPES)}"
     lora["pool"] = "cls-trained"
     lora["layer"] = 0                   # sentinel: no readout layer, all 12 update
     lora["C"] = np.nan
@@ -73,22 +79,27 @@ if lora is not None:
         "r=" + lora["lora_r"].astype(str) + ", alpha=" + lora["lora_alpha"].astype(str)
         + ", lora_dropout=" + lora["lora_dropout"].astype(str)
         + ", target_modules=" + lora["target_modules"].astype(str)
+        + ", modules_to_save=" + lora["modules_to_save"].astype(str)
         + ", lr=" + lora["lr"].astype(str)
         + ", weight_decay=" + lora["weight_decay"].astype(str)
         + ", batch=" + lora["batch_size"].astype(str)
         + ", optimizer=" + lora["optimizer"].astype(str)
+        + ", precision=" + lora["precision"].astype(str)
         + ", max_epochs=" + lora["max_epochs"].astype(str)
-        + ", patience=" + lora["patience"].astype(str))
+        + ", warmup_ratio=" + lora["warmup_ratio"].astype(str)
+        + ", eval=" + lora["eval_cadence"].astype(str))
 
-# TODO(LoRA arm): add "trainable_params" and "pct_trainable" to COLS when the
-# LoRA arm lands. Deferred because the extra columns change the
-# history_table.csv header, and with it the regression checksum.
 COLS = ["model_type", "task", "dataset", "pool", "layer", "layer_role",
         "seed", "C", "class_weight", "dev_mcc", "test_mcc", "dev_selected",
         "best_epoch", "epochs_run", "early_stopped", "batch_size",
         "hidden_dims", "dropout", "lr", "weight_decay", "optimizer",
         "max_epochs", "patience", "n_iter", "at_grid_edge",
         "in_notebook_grid", "hyperparams"]
+# Parameter budget is the LoRA arm's headline, so it gets first-class columns
+# (blank for LR / MLP). Added only once LoRA rows exist, so the frozen-only
+# tables stay byte-identical to their committed versions until then.
+if lora is not None:
+    COLS += ["trainable_params", "pct_trainable"]
 
 arms = [lr, mlp] + ([lora] if lora is not None else [])
 hist = pd.concat(arms, ignore_index=True)
@@ -158,9 +169,13 @@ best.to_csv(os.path.join(R, "best_frozen_vs_paper.csv"), index=False)
 
 # ---- frozen best and LoRA side by side, only once the LoRA arm has run -----
 if lora is not None:
-    ft = (agg[agg.model_type == "LoRA"]
-          [["dataset", "n", "dev_mcc_mean", "test_mcc_mean", "test_mcc_sd"]]
-          .rename(columns={"n": "lora_n", "dev_mcc_mean": "lora_dev_mcc_mean",
+    # best LoRA row per dataset across both variants, selected on dev
+    ft_all = agg[agg.model_type.str.startswith("LoRA")]
+    ft = (ft_all.loc[ft_all.groupby("dataset")["dev_mcc_mean"].idxmax()]
+          [["dataset", "model_type", "n", "dev_mcc_mean", "test_mcc_mean",
+            "test_mcc_sd"]]
+          .rename(columns={"model_type": "best_lora_variant",
+                           "n": "lora_n", "dev_mcc_mean": "lora_dev_mcc_mean",
                            "test_mcc_mean": "lora_test_mcc_mean",
                            "test_mcc_sd": "lora_test_mcc_sd"}))
     both = best.rename(columns={"gap_vs_paper": "frozen_gap_vs_paper",

@@ -4,10 +4,10 @@ Extends a simple DNABERT-2 GUE benchmark notebook from a single
 final-layer readout to a full sweep over all 12 encoder layers, both pooling
 strategies, and two classifier heads, on 26 of the 28 GUE datasets.
 
-Nothing here is fine-tuned. DNABERT-2's weights are frozen throughout; only the
-classifier on top of the cached embeddings is trained. (A LoRA fine-tuning arm
-is planned; `dnabert2_gue.lora` and `scripts/05_lora_sweep.py` are stubs that
-fix its interface.)
+In the frozen arms (LR, MLP) DNABERT-2's weights are frozen throughout; only the
+classifier on top of the cached embeddings is trained. A third arm fine-tunes
+the model with LoRA adapters (see [LoRA arm](#lora-arm)); its code is in place
+and its results are pending.
 
 ## Requirements
 
@@ -17,13 +17,14 @@ fix its interface.)
 | Disk | ~55 GB free — 53 GB embeddings + 1.1 GB GUE |
 | CPU | 20 cores on the reference machine; `03_lr_sweep.py` scales with core count |
 | First run | Downloads the DNABERT-2 checkpoint (~500 MB) from HuggingFace. `HF_HUB_OFFLINE=1` works on every subsequent run. |
-| Wall clock | verify ~2 min · embed ~10 min · LR sweep ~2.0 h · MLP sweep ~51 min · tables <1 min |
+| Wall clock | verify ~2 min · embed ~10 min · LR sweep ~2.0 h · MLP sweep ~51 min · tables <1 min · LoRA calibration ~11 min and full sweep ≤6.4 h (estimates) |
 
-**Only `01_verify_layers.py` and `02_embed_all.py` need the GPU**, and both exit
-with a clear message if none is found rather than falling back to a multi-day
-CPU run. Once `layer_embed/` exists everything downstream is CPU-only, and every
-result is committed under `results/`, so without a card you can still rerun the
-LR and MLP arms from existing embeddings, or skip straight to the tables.
+**Only `01_verify_layers.py`, `02_embed_all.py` and `05_lora_sweep.py` need the
+GPU**, and all three exit with a clear message if none is found rather than
+falling back to a multi-day CPU run. Once `layer_embed/` exists the frozen arms
+are CPU-only, and every result is committed under `results/`, so without a card
+you can still rerun the LR and MLP arms from existing embeddings, or skip
+straight to the tables.
 
 ---
 
@@ -52,6 +53,8 @@ flowing into DNABERT-2.
 - `figures/layer_profile.png` — dev MCC vs. encoder layer, per task
 - `figures/lr_vs_mlp.png` — paired LR vs. MLP test MCC over 156 cells
 - `figures/vs_paper.png` — best frozen config vs. paper Table 6, 26 datasets
+- `figures/lora_calibration.png` — LoRA dev MCC vs. learning rate against the
+  best frozen dev MCC (written by `05_lora_sweep.py --mode calibrate`)
 
 ## Result 1 — the final layer is never the right layer
 
@@ -122,14 +125,51 @@ against a 512 ceiling; with 4.5× headroom, nothing is truncated.
 - MLP: `TaperedMLP(768 → 256 → 2)`, dropout 0.1, AdamW lr 1e-3, weight decay
   0.01, batch 32, max 200 epochs, patience 10, 3 seeds (42/43/44).
 
+### LoRA arm
+
+Fine-tunes DNABERT-2 end to end through LoRA adapters, with a trained
+classification head, as a direct comparison against the frozen probes.
+
+- PEFT: `r = 8`, `alpha = 16` (scaling 2.0, fixed), LoRA dropout 0.05,
+  `modules_to_save = ["classifier", "pooler"]`. The checkpoint ships no trained
+  pooler, so it is trained in full.
+- Two variants, each its own `model_type` in the tables:
+
+  | Variant | `model_type` | `target_modules` | Wrapped | Trainable / total | % |
+  |---|---|---|---|---|---|
+  | `attn` | `LoRA-attn` | `Wqkv` | 12 | 887,042 / 117,957,124 | 0.752 |
+  | `attn_mlp` | `LoRA-attn+mlp` | `Wqkv`, `mlp.gated_layers`, `mlp.wo` | 36 | 1,919,234 / 118,989,316 | 1.613 |
+
+  MosaicBERT fuses Q, K and V into one `attention.self.Wqkv`; a config naming
+  `query`/`key`/`value` matches nothing and silently trains only the head.
+- AdamW, weight decay 0.01, linear schedule with 6 % warmup, batch 128 with bf16
+  autocast, 5 fixed epochs (no early stopping), unweighted `CrossEntropyLoss`
+  (as in the MLP arm), max length 512, 3 seeds (42/43/44).
+- Dev is evaluated **once per epoch** and the best-dev adapter + head state is
+  restored before test is scored once. Per-epoch evaluation gives every
+  dataset the same number of selection draws (5); a step-based cadence would
+  not.
+- The learning rate is calibrated once (`05_lora_sweep.py --mode calibrate`):
+  `attn`, seed 42, lr ∈ {1e-4, 3e-4, 1e-3} on `mouse__3`,
+  `prom__prom_core_tata` and `EMP__H3K4me3` (three sizes), choosing the
+  highest mean dev MCC. That lr is then fixed for all 26 datasets. This is
+  insurance against a bad-lr false negative, not per-dataset tuning.
+- **Limitation:** both variants run at the lr calibrated for `attn`. A win for
+  `attn_mlp` is therefore a lower bound, and a loss is partly confounded with
+  learning rate.
+- Pooling is not a free choice here: the classification head reads position 0
+  through the trained pooler (`pool = "cls-trained"`). Since the frozen arm's
+  mean-over-`[CLS]` result is explained by the untrained pooler, this arm also
+  tests that explanation.
+
 ### Caveats
 
 - **The dev column is a selection statistic, not a performance estimate.** Each
   dataset receives 9 C × 2 class_weight × 12 layers × 2 poolings = 432 dev
   evaluations, and taking the max over those is upward-biased. Test is clean.
-- The MLP uses an unweighted `CrossEntropyLoss` (the notebook's definition)
-  while LR searches `class_weight`. At 0.44–0.59 positive fraction this
-  asymmetry is cosmetic, but the two arms are not matched on it.
+- The MLP and LoRA arms use an unweighted `CrossEntropyLoss` (the notebook's
+  definition) while LR searches `class_weight`. At 0.44–0.59 positive fraction this
+  asymmetry is cosmetic, but the arms are not matched on it.
 - The paper fine-tunes end-to-end and averages 3 seeds; **Table 6** is the
   reference used here. Table 9 disagrees with it on TF-H and TF-M.
 - Assumption diagnostics (calibration, residual structure) were not assessed.
@@ -168,10 +208,12 @@ rebuilt from the inputs by `06_build_tables.py` in under a minute.
 | `results/mlp_results.csv` | input | 468 rows — per-seed MLP runs |
 | `results/selected_layers.csv` | input | the three layers per task fed to the MLP arm |
 | `results/paper_table6_dnabert2.csv` | input | the paper's fine-tuned DNABERT-2 MCC (Table 6) |
+| `results/lora_results.csv` | input | per-seed LoRA runs, both variants (once run) |
+| `results/lora_calibration.csv` | record | lr calibration runs, with `at_grid_edge` (once run) |
 | `results/history_table.csv` | derived | 3,276 rows — the full history table (2,808 LR + 468 MLP) |
 | `results/history_table_aggregated.csv` | derived | 312 rows — seed-aggregated / cell-best companion |
 | `results/best_frozen_vs_paper.csv` | derived | 26 rows — best dev-selected frozen config per dataset vs. Table 6 |
-| `results/best_vs_paper_with_finetune.csv` | derived | written only once `lora_results.csv` exists — frozen best and LoRA side by side vs. Table 6 |
+| `results/best_vs_paper_with_finetune.csv` | derived | written only once `lora_results.csv` exists — frozen best and best LoRA variant (`best_lora_variant`) side by side vs. Table 6 |
 | `results/mlp_batch_benchmark.csv` | record | batch 32 vs 256, 3 seeds |
 | `results/verify_layers.json` | record | layer-12 equivalence check and sampled token lengths |
 | `results/epi_sep_check.txt` | record | `[SEP]` placement for a sequence pair |
@@ -195,8 +237,11 @@ LoRA rows (once `results/lora_results.csv` exists) use sentinels, because
 fine-tuning has no readout layer and no free pooling choice: `layer = 0` (real
 encoder layers are 1–12), `layer_role = "finetuned"` and `pool = "cls-trained"`
 (the stock classification head reads position 0 through a pooler that LoRA
-trains). LoRA settings (`r`, `alpha`, `lora_dropout`, `target_modules`) go in
-`hyperparams`.
+trains). `model_type` is `LoRA-attn` or `LoRA-attn+mlp`, so the two variants
+never share an aggregation key; `model_type.str.startswith("LoRA")` selects
+both. LoRA settings (`r`, `alpha`, `lora_dropout`, `target_modules`, warmup,
+precision) go in `hyperparams`. Once LoRA rows exist the table gains two
+columns, `trainable_params` and `pct_trainable`, which are blank for LR and MLP.
 
 ## Reproducing
 
@@ -210,6 +255,8 @@ python scripts/01_verify_layers.py     # correctness gate (GPU)
 python scripts/02_embed_all.py         # ~10 min, writes 53 GB (GPU)
 OMP_NUM_THREADS=3 python scripts/03_lr_sweep.py   # ~2.0 h (CPU)
 python scripts/04_mlp_sweep.py 32      # ~51 min
+python scripts/05_lora_sweep.py --mode calibrate          # ~11 min (GPU); stops at the decision gate
+python scripts/05_lora_sweep.py --mode full --lr <chosen> # ≤6.4 h (GPU), both variants
 python scripts/06_build_tables.py      # <1 min, rebuilds the derived tables
 ```
 
@@ -220,8 +267,8 @@ resolves its default paths from the repo root and refuses to run from a
 non-editable install. After the first run, `HF_HUB_OFFLINE=1` skips the
 HuggingFace check.
 
-`02_embed_all.py`, `03_lr_sweep.py` and `04_mlp_sweep.py` all resume from
-partial state. `03_lr_sweep.py` runs `cpu_count // 3` parallel jobs by default
+`02_embed_all.py`, `03_lr_sweep.py`, `04_mlp_sweep.py` and `05_lora_sweep.py`
+all resume from partial state. `03_lr_sweep.py` runs `cpu_count // 3` parallel jobs by default
 (6 jobs × `OMP_NUM_THREADS=3` was measured best on 20 cores); set
 `SWEEP_N_JOBS` to override. Timings were measured on an RTX 4080 / 20 CPU cores.
 

@@ -63,3 +63,25 @@ def manifest():
 
 
 DATASET_TASK = {key: task for task, key, _ in manifest()}
+
+
+# --------------------------------------------------------------------------
+# LoRA fine-tuning arm
+# --------------------------------------------------------------------------
+
+LORA_SEEDS = (42, 43, 44)
+LORA_BATCH = 128             # bf16; ~817 seq/s, 6.4 GiB peak on an RTX 4080
+LORA_MAX_EPOCHS = 5
+LORA_WARMUP_RATIO = 0.06
+LORA_WEIGHT_DECAY = 0.01
+LORA_R = 8                   # r and alpha fixed: alpha/r = 2.0 throughout
+LORA_ALPHA = 16
+LORA_DROPOUT = 0.05
+LORA_MAX_LENGTH = 512
+LORA_CALIB_LRS = (1e-4, 3e-4, 1e-3)
+LORA_CALIB_DATASETS = ("mouse__3", "prom__prom_core_tata", "EMP__H3K4me3")
+
+LORA_VARIANTS = {
+    "attn":     ["Wqkv"],
+    "attn_mlp": ["Wqkv", "mlp.gated_layers", "mlp.wo"],
+}
