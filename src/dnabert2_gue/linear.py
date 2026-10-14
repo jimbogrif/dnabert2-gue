@@ -22,17 +22,23 @@ CLASS_WEIGHTS = [None, "balanced"]
 CS_NOTEBOOK = set(np.logspace(-4, 2, 7).round(10))
 
 
-def grid_search_lr(dataset, pool, layer, d=EMBED_DIR, Cs=CS,
-                   class_weights=CLASS_WEIGHTS):
-    """Fit the C x class_weight grid; dev selects, test is scored once."""
+def fit_lr_grid(splits, meta, Cs=CS, class_weights=CLASS_WEIGHTS):
+    """Fit the C x class_weight grid on supplied arrays; dev selects, test once.
+
+    ``splits`` is (X_tr, y_tr, X_dv, y_dv, X_te, y_te); ``meta`` is the dict of
+    identifying columns merged into every row (dataset/task/pool/layer for the
+    embedding arm, plus the featurization for the bag arm).
+
+    Extracted from ``grid_search_lr`` unchanged so the bag-of-k-mers arm can run
+    the identical grid on in-memory features instead of cached .npy — the point
+    of that comparison is that only the featurization differs.
+    """
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import matthews_corrcoef
 
-    X_tr, y_tr = load_split(dataset, "train", layer, pool, d)
-    X_dv, y_dv = load_split(dataset, "dev", layer, pool, d)
-    X_te, y_te = load_split(dataset, "test", layer, pool, d)
+    X_tr, y_tr, X_dv, y_dv, X_te, y_te = splits
 
     rows, best_mcc, best_clf, best_i = [], -np.inf, None, None
     for C, cw in itertools.product(Cs, class_weights):   # ascending C: ties keep simpler model
@@ -41,8 +47,7 @@ def grid_search_lr(dataset, pool, layer, d=EMBED_DIR, Cs=CS,
         clf.fit(X_tr, y_tr)
         mcc = matthews_corrcoef(y_dv, clf.predict(X_dv))
         rows.append({
-            "dataset": dataset, "task": DATASET_TASK[dataset], "pool": pool,
-            "layer": layer, "C": C,
+            **meta, "C": C,
             # literal "none" -- "None" round-trips through read_csv as NaN
             "class_weight": "none" if cw is None else cw,
             "dev_mcc": mcc, "test_mcc": np.nan,
@@ -55,6 +60,17 @@ def grid_search_lr(dataset, pool, layer, d=EMBED_DIR, Cs=CS,
 
     rows[best_i]["test_mcc"] = matthews_corrcoef(y_te, best_clf.predict(X_te))
     rows[best_i]["selected"] = True
-    for i, r in enumerate(rows):
+    for r in rows:
         r.setdefault("selected", False)
     return rows
+
+
+def grid_search_lr(dataset, pool, layer, d=EMBED_DIR, Cs=CS,
+                   class_weights=CLASS_WEIGHTS):
+    """Fit the C x class_weight grid; dev selects, test is scored once."""
+    splits = (*load_split(dataset, "train", layer, pool, d),
+              *load_split(dataset, "dev", layer, pool, d),
+              *load_split(dataset, "test", layer, pool, d))
+    meta = {"dataset": dataset, "task": DATASET_TASK[dataset],
+            "pool": pool, "layer": layer}
+    return fit_lr_grid(splits, meta, Cs, class_weights)

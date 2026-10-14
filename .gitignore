@@ -1,6 +1,7 @@
 layer_embed
 data/
 results/lr_cells/
+results/bag_lr_cells/
 results/*_histories.csv.gz
 *_log.txt
 *.npy

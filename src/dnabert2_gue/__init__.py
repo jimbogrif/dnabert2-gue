@@ -10,3 +10,4 @@ from .mlp import run_mlp, prep_data, evaluate, train_model
 from .config import (LORA_SEEDS, LORA_BATCH, LORA_MAX_EPOCHS, LORA_PATIENCE,
                      LORA_CALIB_LRS, LORA_CALIB_DATASETS, LORA_VARIANTS)
 from .lora import run_lora, build_lora_model
+from .bags import FEATS, KS, kmer_matrix, bpe_matrix, grid_search_bag, run_bag_mlp

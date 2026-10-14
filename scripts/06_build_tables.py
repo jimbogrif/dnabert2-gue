@@ -36,6 +36,9 @@ mlp = pd.read_csv(os.path.join(R, "mlp_results.csv"), **na)
 LORA = os.path.join(R, "lora_results.csv")
 lora = pd.read_csv(LORA, **na) if os.path.exists(LORA) else None
 
+BAG = os.path.join(R, "bag_results.csv")
+bag = pd.read_csv(BAG, **na) if os.path.exists(BAG) else None
+
 # ---- LR rows, restricted to the three selected layers per task --------------
 lr = grid[[(t, l) in keep for t, l in zip(grid.task, grid.layer)]].copy()
 lr["model_type"] = "LR"
@@ -90,6 +93,28 @@ if lora is not None:
         + ", warmup_ratio=" + lora["warmup_ratio"].astype(str)
         + ", eval=" + lora["eval_cadence"].astype(str))
 
+# ---- bag-of-tokens floor (optional fourth arm) -----------------------------
+# Two families, kept as separate model_type values so the aggregate's groupby
+# does not pool them: 'kmer-*' answers "does DNABERT-2 beat base composition?",
+# 'bpe-*' the sharper "does the transformer beat its own tokenizer?" (same 4,096
+# vocabulary, same segmentation, no forward pass). Within kmer-*, k is selected
+# on dev exactly as C is -- see the per-dataset selection below.
+if bag is not None:
+    fam = np.where(bag["feat"].astype(str).str.startswith("kmer"), "kmer", "bpe")
+    bag["model_type"] = fam + "-" + bag["head_type"].astype(str)
+    bag["layer"] = -1                   # sentinel: LoRA already uses 0
+    bag["pool"] = "bag"
+    bag["dev_selected"] = True          # every reported bag row is a winner
+    bag["in_notebook_grid"] = False
+    if "class_weight" not in bag:
+        bag["class_weight"] = "n/a"
+    bag["class_weight"] = bag["class_weight"].fillna("n/a")
+    bag["hyperparams"] = (
+        "feat=" + bag["feat"].astype(str)
+        + ", n_features=" + bag["n_features"].astype(str)
+        + ", head=" + bag["head_type"].astype(str))
+
+
 COLS = ["model_type", "task", "dataset", "pool", "layer", "layer_role",
         "seed", "C", "class_weight", "dev_mcc", "test_mcc", "dev_selected",
         "best_epoch", "epochs_run", "early_stopped", "batch_size",
@@ -101,10 +126,13 @@ COLS = ["model_type", "task", "dataset", "pool", "layer", "layer_role",
 # tables stay byte-identical to their committed versions until then.
 if lora is not None:
     COLS += ["trainable_params", "pct_trainable"]
+# Which featurization won is the bag arm's headline, so it is first-class too.
+if bag is not None:
+    COLS += ["feat", "n_features"]
 
-arms = [lr, mlp] + ([lora] if lora is not None else [])
+arms = [lr, mlp] + ([lora] if lora is not None else []) + ([bag] if bag is not None else [])
 hist = pd.concat(arms, ignore_index=True)
-hist["layer_role"] = [role.get((t, l), "finetuned")
+hist["layer_role"] = [role.get((t, l), "bag" if l == -1 else "finetuned")
                       for t, l in zip(hist.task, hist.layer)]
 for c in COLS:
     if c not in hist:
@@ -143,8 +171,35 @@ def seed_agg(df):
 mlp_agg = seed_agg(mlp)
 lora_agg = [seed_agg(lora)] if lora is not None else []
 
-agg = pd.concat([lr_best, mlp_agg] + lora_agg, ignore_index=True)
-agg["layer_role"] = [role.get((t, l), "finetuned")
+bag_agg = []
+if bag is not None:
+    # LR rows carry no seed; MLP rows carry three. Aggregate each the way the
+    # embedding arms do, then let dev pick the featurization per dataset -- so
+    # one row per (family, head) per dataset, k chosen like any hyperparameter.
+    b_lr = bag[bag.head_type == "LR"]
+    b_mlp = bag[bag.head_type == "MLP"]
+    parts = []
+    if len(b_lr):
+        parts.append(b_lr.assign(n=1)[["model_type", "task", "dataset", "pool", "layer",
+                                       "feat", "dev_mcc", "test_mcc", "C", "class_weight",
+                                       "at_grid_edge", "n"]]
+                     .rename(columns={"dev_mcc": "dev_mcc_mean", "test_mcc": "test_mcc_mean"})
+                     .assign(dev_mcc_sd=np.nan, test_mcc_sd=np.nan, best_epoch_mean=np.nan))
+    if len(b_mlp):
+        a = (b_mlp.groupby(["model_type", "task", "dataset", "pool", "layer", "feat"])
+             .agg(dev_mcc_mean=("dev_mcc", "mean"), dev_mcc_sd=("dev_mcc", "std"),
+                  test_mcc_mean=("test_mcc", "mean"), test_mcc_sd=("test_mcc", "std"),
+                  best_epoch_mean=("best_epoch", "mean"), n=("seed", "count"))
+             .reset_index())
+        a["C"] = np.nan; a["class_weight"] = "n/a"; a["at_grid_edge"] = False
+        parts.append(a)
+    b = pd.concat(parts, ignore_index=True)
+    b = b.loc[b.groupby(["model_type", "dataset"])["dev_mcc_mean"].idxmax()]
+    bag_agg = [b.drop(columns=["feat"])]
+    b.to_csv(os.path.join(R, "bag_best_per_dataset.csv"), index=False)
+
+agg = pd.concat([lr_best, mlp_agg] + lora_agg + bag_agg, ignore_index=True)
+agg["layer_role"] = [role.get((t, l), "bag" if l == -1 else "finetuned")
                      for t, l in zip(agg.task, agg.layer)]
 agg = agg[["model_type", "task", "dataset", "pool", "layer", "layer_role",
            "n", "dev_mcc_mean", "dev_mcc_sd", "test_mcc_mean", "test_mcc_sd",
