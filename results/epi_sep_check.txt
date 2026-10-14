@@ -1,0 +1,10 @@
+EPI/GM12878 dev row 0: len(a)=3000 len(b)=2000
+columns: ['enhancer', 'promoter', 'label']
+
+notebook form  tok([[a, b]]): n_tokens=512  [SEP] at [256, 511]  (last index 511)
+    head: ['[CLS]', 'TCAAAA', 'AAAAAAAAAAAAAAAA', 'AAA']
+    tail: ['GGCCCA', 'CCCC', 'CAGG', '[SEP]']
+
+documented     tok([a], [b]): n_tokens=512  [SEP] at [256, 511]  (last index 511)
+    head: ['[CLS]', 'TCAAAA', 'AAAAAAAAAAAAAAAA', 'AAA']
+    tail: ['GGCCCA', 'CCCC', 'CAGG', '[SEP]']

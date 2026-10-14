@@ -1,0 +1,16 @@
+task,layer,rank_in_task,role,mean_dev_mcc
+CPD,2,1,top1,0.600029
+CPD,5,2,top2,0.591095
+CPD,12,11,final,0.549592
+EMP,6,1,top1,0.470417
+EMP,11,2,top2,0.467143
+EMP,12,8,final,0.44839
+PD,5,2,top2,0.780707
+PD,6,1,top1,0.785933
+PD,12,10,final,0.708613
+TF-H,4,2,top2,0.526251
+TF-H,5,1,top1,0.529815
+TF-H,12,11,final,0.467843
+TF-M,3,2,top2,0.615773
+TF-M,5,1,top1,0.640864
+TF-M,12,12,final,0.467848

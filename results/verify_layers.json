@@ -1,0 +1,266 @@
+{
+  "torch": "2.7.1+cu128",
+  "cuda": true,
+  "layer12_vs_default_forward": [
+    {
+      "dataset": "mouse__3",
+      "split": "dev",
+      "pool": "mean",
+      "shape_ref": [
+        239,
+        768
+      ],
+      "shape_got": [
+        239,
+        768
+      ],
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "ref_abs_mean": 0.07277373224496841,
+      "exact": true,
+      "allclose_1e4": true
+    },
+    {
+      "dataset": "mouse__3",
+      "split": "dev",
+      "pool": "cls",
+      "shape_ref": [
+        239,
+        768
+      ],
+      "shape_got": [
+        239,
+        768
+      ],
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "ref_abs_mean": 0.14652380347251892,
+      "exact": true,
+      "allclose_1e4": true
+    },
+    {
+      "dataset": "prom__prom_core_tata",
+      "split": "dev",
+      "pool": "mean",
+      "shape_ref": [
+        613,
+        768
+      ],
+      "shape_got": [
+        613,
+        768
+      ],
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "ref_abs_mean": 0.07626080513000488,
+      "exact": true,
+      "allclose_1e4": true
+    },
+    {
+      "dataset": "prom__prom_core_tata",
+      "split": "dev",
+      "pool": "cls",
+      "shape_ref": [
+        613,
+        768
+      ],
+      "shape_got": [
+        613,
+        768
+      ],
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "ref_abs_mean": 0.15345601737499237,
+      "exact": true,
+      "allclose_1e4": true
+    }
+  ],
+  "token_lengths": {
+    "EMP__H3": {
+      "task": "EMP",
+      "n_tok_min": 96,
+      "n_tok_med": 103.0,
+      "n_tok_max": 115,
+      "bp_max": 500
+    },
+    "EMP__H3K14ac": {
+      "task": "EMP",
+      "n_tok_min": 96,
+      "n_tok_med": 103.0,
+      "n_tok_max": 110,
+      "bp_max": 500
+    },
+    "EMP__H3K36me3": {
+      "task": "EMP",
+      "n_tok_min": 97,
+      "n_tok_med": 104.0,
+      "n_tok_max": 111,
+      "bp_max": 500
+    },
+    "EMP__H3K4me1": {
+      "task": "EMP",
+      "n_tok_min": 96,
+      "n_tok_med": 104.0,
+      "n_tok_max": 112,
+      "bp_max": 500
+    },
+    "EMP__H3K4me2": {
+      "task": "EMP",
+      "n_tok_min": 97,
+      "n_tok_med": 103.0,
+      "n_tok_max": 111,
+      "bp_max": 500
+    },
+    "EMP__H3K4me3": {
+      "task": "EMP",
+      "n_tok_min": 95,
+      "n_tok_med": 103.0,
+      "n_tok_max": 110,
+      "bp_max": 500
+    },
+    "EMP__H3K79me3": {
+      "task": "EMP",
+      "n_tok_min": 95,
+      "n_tok_med": 103.0,
+      "n_tok_max": 112,
+      "bp_max": 500
+    },
+    "EMP__H3K9ac": {
+      "task": "EMP",
+      "n_tok_min": 95,
+      "n_tok_med": 104.0,
+      "n_tok_max": 109,
+      "bp_max": 500
+    },
+    "EMP__H4": {
+      "task": "EMP",
+      "n_tok_min": 97,
+      "n_tok_med": 103.0,
+      "n_tok_max": 113,
+      "bp_max": 500
+    },
+    "EMP__H4ac": {
+      "task": "EMP",
+      "n_tok_min": 95,
+      "n_tok_med": 103.0,
+      "n_tok_max": 112,
+      "bp_max": 500
+    },
+    "mouse__0": {
+      "task": "TF-M",
+      "n_tok_min": 18,
+      "n_tok_med": 24.0,
+      "n_tok_max": 28,
+      "bp_max": 101
+    },
+    "mouse__1": {
+      "task": "TF-M",
+      "n_tok_min": 17,
+      "n_tok_med": 22.0,
+      "n_tok_max": 26,
+      "bp_max": 101
+    },
+    "mouse__2": {
+      "task": "TF-M",
+      "n_tok_min": 10,
+      "n_tok_med": 22.0,
+      "n_tok_max": 27,
+      "bp_max": 101
+    },
+    "mouse__3": {
+      "task": "TF-M",
+      "n_tok_min": 19,
+      "n_tok_med": 23.0,
+      "n_tok_max": 26,
+      "bp_max": 101
+    },
+    "mouse__4": {
+      "task": "TF-M",
+      "n_tok_min": 20,
+      "n_tok_med": 24.0,
+      "n_tok_max": 28,
+      "bp_max": 101
+    },
+    "tf__0": {
+      "task": "TF-H",
+      "n_tok_min": 17,
+      "n_tok_med": 24.0,
+      "n_tok_max": 28,
+      "bp_max": 101
+    },
+    "tf__1": {
+      "task": "TF-H",
+      "n_tok_min": 19,
+      "n_tok_med": 24.0,
+      "n_tok_max": 28,
+      "bp_max": 101
+    },
+    "tf__2": {
+      "task": "TF-H",
+      "n_tok_min": 17,
+      "n_tok_med": 24.0,
+      "n_tok_max": 27,
+      "bp_max": 101
+    },
+    "tf__3": {
+      "task": "TF-H",
+      "n_tok_min": 16,
+      "n_tok_med": 23.0,
+      "n_tok_max": 27,
+      "bp_max": 101
+    },
+    "tf__4": {
+      "task": "TF-H",
+      "n_tok_min": 17,
+      "n_tok_med": 23.5,
+      "n_tok_max": 28,
+      "bp_max": 101
+    },
+    "prom__prom_300_all": {
+      "task": "PD",
+      "n_tok_min": 59,
+      "n_tok_med": 66.0,
+      "n_tok_max": 72,
+      "bp_max": 300
+    },
+    "prom__prom_300_notata": {
+      "task": "PD",
+      "n_tok_min": 56,
+      "n_tok_med": 66.0,
+      "n_tok_max": 75,
+      "bp_max": 300
+    },
+    "prom__prom_300_tata": {
+      "task": "PD",
+      "n_tok_min": 57,
+      "n_tok_med": 63.0,
+      "n_tok_max": 71,
+      "bp_max": 300
+    },
+    "prom__prom_core_all": {
+      "task": "CPD",
+      "n_tok_min": 14,
+      "n_tok_med": 17.0,
+      "n_tok_max": 21,
+      "bp_max": 70
+    },
+    "prom__prom_core_notata": {
+      "task": "CPD",
+      "n_tok_min": 13,
+      "n_tok_med": 17.0,
+      "n_tok_max": 20,
+      "bp_max": 70
+    },
+    "prom__prom_core_tata": {
+      "task": "CPD",
+      "n_tok_min": 12,
+      "n_tok_med": 17.0,
+      "n_tok_max": 21,
+      "bp_max": 70
+    }
+  },
+  "max_tokens_any_dataset": 115,
+  "epi_sep_check": {
+    "skipped": false
+  }
+}

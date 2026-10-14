@@ -1,0 +1,27 @@
+dataset,task,paper_mcc_x100,source
+EMP__H3,EMP,78.27,Table 6 DNABERT-2
+EMP__H3K14ac,EMP,52.57,Table 6 DNABERT-2
+EMP__H3K36me3,EMP,56.88,Table 6 DNABERT-2
+EMP__H3K4me1,EMP,50.52,Table 6 DNABERT-2
+EMP__H3K4me2,EMP,31.13,Table 6 DNABERT-2
+EMP__H3K4me3,EMP,36.27,Table 6 DNABERT-2
+EMP__H3K79me3,EMP,67.39,Table 6 DNABERT-2
+EMP__H3K9ac,EMP,55.63,Table 6 DNABERT-2
+EMP__H4,EMP,80.71,Table 6 DNABERT-2
+EMP__H4ac,EMP,50.43,Table 6 DNABERT-2
+prom__prom_300_all,PD,86.77,Table 6 DNABERT-2
+prom__prom_300_notata,PD,94.27,Table 6 DNABERT-2
+prom__prom_300_tata,PD,71.59,Table 6 DNABERT-2
+prom__prom_core_all,CPD,69.37,Table 6 DNABERT-2
+prom__prom_core_notata,CPD,68.04,Table 6 DNABERT-2
+prom__prom_core_tata,CPD,74.17,Table 6 DNABERT-2
+tf__0,TF-H,71.99,Table 6 DNABERT-2
+tf__1,TF-H,76.06,Table 6 DNABERT-2
+tf__2,TF-H,66.52,Table 6 DNABERT-2
+tf__3,TF-H,58.54,Table 6 DNABERT-2
+tf__4,TF-H,77.43,Table 6 DNABERT-2
+mouse__0,TF-M,56.76,Table 6 DNABERT-2
+mouse__1,TF-M,84.77,Table 6 DNABERT-2
+mouse__2,TF-M,79.32,Table 6 DNABERT-2
+mouse__3,TF-M,66.47,Table 6 DNABERT-2
+mouse__4,TF-M,52.66,Table 6 DNABERT-2

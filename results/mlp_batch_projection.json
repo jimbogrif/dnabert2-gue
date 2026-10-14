@@ -1,0 +1,11 @@
+{
+  "dataset": "EMP__H3K4me3",
+  "layer": 6,
+  "pool": "mean",
+  "n_bench_train": 29439,
+  "n_total_train": 627671,
+  "projected_hours": {
+    "32": 1.67,
+    "256": 0.27
+  }
+}
