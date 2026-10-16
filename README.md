@@ -2,8 +2,7 @@
 
 This repository accompanies the blog post
 **[DNABERT-2 classification](https://jimbogrif.github.io/posts/DNABERT2-classification/)**.
-The post presents and discusses the results. This repo holds the code that
-produced them and the result tables it wrote.
+This repo holds the code used in the benchmark and the result tables it wrote.
 
 It runs four arms on 26 of the 28 GUE datasets, all under one protocol: dev
 selects each configuration, and test is scored once.
