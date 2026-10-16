@@ -1,8 +1,8 @@
-# DNABERT-2 on GUE: layer × pooling × classifier, LoRA, and a bag-of-tokens floor
+# Benchmarking DNABERT-2 on GUE (Genomic Understanding Evaluation)
 
 This repository accompanies the blog post
 **[DNABERT-2 classification](https://jimbogrif.github.io/posts/DNABERT2-classification/)**.
-This repo holds the code used in the benchmark and the result tables it wrote.
+This repo holds the code used in the benchmark and the result tables it wrote. 
 
 It runs four arms on 26 of the 28 GUE datasets, all under one protocol: dev
 selects each configuration, and test is scored once.
@@ -164,6 +164,24 @@ The sweep scripts also write per-epoch training curves
 - `class_weight=None` is stored as the literal string `"none"`, so `pd.read_csv`
   does not read it as NaN.
 
+## Credit & Attribution
+
+This benchmark builds on **DNABERT-2** and the **GUE** benchmark introduced by Zhou et al. All credit for the model, the GUE datasets, and the original benchmark methodology goes to the original authors.
+
+- **Paper:** Zhihan Zhou, Yanrong Ji, Weijian Li, Pratik Dutta, Ramana Davuluri, Han Liu. *DNABERT-2: Efficient Foundation Model and Benchmark For Multi-Species Genome.* arXiv:2306.15006 (2023). <https://arxiv.org/abs/2306.15006>
+- **Original code:** [MAGICS-LAB/DNABERT_2](https://github.com/MAGICS-LAB/DNABERT_2)
+
+If you use this work, please cite the original paper:
+
+```bibtex
+@article{zhou2023dnabert2,
+  title   = {DNABERT-2: Efficient Foundation Model and Benchmark For Multi-Species Genome},
+  author  = {Zhou, Zhihan and Ji, Yanrong and Li, Weijian and Dutta, Pratik and Davuluri, Ramana and Liu, Han},
+  journal = {arXiv preprint arXiv:2306.15006},
+  year    = {2023}
+}
+```
+
 ## TODO
 
 - **Confirm the blog post URL** at the top of this file.
@@ -179,3 +197,4 @@ The sweep scripts also write per-epoch training curves
 - **Reconcile the two token-length records.** `01_verify_layers.py` samples 200
   training sequences per dataset (`verify_layers.json`: max 115 tokens), while
   `embed_manifest.csv` covers every sequence in every split (max 116).
+
