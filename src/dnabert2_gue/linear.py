@@ -9,6 +9,10 @@ The third documented fix relative to the original notebook lives here:
 import itertools
 
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import matthews_corrcoef
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from .config import DATASET_TASK, EMBED_DIR
 from .embed import load_split
@@ -33,11 +37,6 @@ def fit_lr_grid(splits, meta, Cs=CS, class_weights=CLASS_WEIGHTS):
     the identical grid on in-memory features instead of cached .npy — the point
     of that comparison is that only the featurization differs.
     """
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import matthews_corrcoef
-
     X_tr, y_tr, X_dv, y_dv, X_te, y_te = splits
 
     rows, best_mcc, best_clf, best_i = [], -np.inf, None, None

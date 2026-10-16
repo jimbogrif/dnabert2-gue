@@ -1,247 +1,51 @@
-# DNABERT-2 frozen-embedding sweep: layer × pooling × classifier on GUE
+# DNABERT-2 on GUE: layer × pooling × classifier, LoRA, and a bag-of-tokens floor
 
-Extends a simple DNABERT-2 GUE benchmark notebook from a single
-final-layer readout to a full sweep over all 12 encoder layers, both pooling
-strategies, and two classifier heads, on 26 of the 28 GUE datasets.
+This repository accompanies the blog post
+**[DNABERT-2 classification](https://jimbogrif.github.io/posts/DNABERT2-classification/)**.
+The post presents and discusses the results. This repo holds the code that
+produced them and the result tables it wrote.
 
-In the frozen arms (LR, MLP) DNABERT-2's weights are frozen throughout; only the
-classifier on top of the cached embeddings is trained. A third arm fine-tunes
-the model with LoRA adapters (see [LoRA arm](#lora-arm)); its code is in place
-and its results are pending.
+It runs four arms on 26 of the 28 GUE datasets, all under one protocol: dev
+selects each configuration, and test is scored once.
+
+| Arm | What is trained | `model_type` |
+|---|---|---|
+| Frozen probe, linear | logistic regression on cached DNABERT-2 embeddings, every layer × mean / `[CLS]` pooling | `LR` |
+| Frozen probe, MLP | a 256-unit MLP on the same cached embeddings, at three selected layers per task | `MLP` |
+| LoRA fine-tune | rank-8 adapters on attention (`Wqkv`) plus a trained pooler and head | `LoRA-attn` |
+| Bag-of-tokens floor | the frozen arms' LR and MLP heads on k-mer (k = 3–6) or DNABERT-2 BPE-token frequencies, with no transformer | `kmer-LR`, `kmer-MLP`, `bpe-LR`, `bpe-MLP` |
+
+## Repository layout
+
+```
+src/dnabert2_gue/       the installable package
+  config.py             paths, dataset manifest, LoRA settings
+  model.py              DNABERT-2 loading and all-layer embedding
+  embed.py              cached-embedding paths and loading
+  linear.py             logistic-regression grid (shared by the frozen and bag arms)
+  mlp.py                TaperedMLP, training loop, one MLP run
+  lora.py               LoRA model construction, training, one LoRA run
+  bags.py               k-mer / BPE featurizers and the bag-arm heads
+scripts/                numbered pipeline steps (see Reproducing)
+results/                committed result tables (see Outputs)
+figures/                committed figures (see Figures)
+```
 
 ## Requirements
 
 | | |
 |---|---|
 | GPU | CUDA card, ≥6 GB VRAM (measured: RTX 4080, 16 GB) |
-| Disk | ~55 GB free — 53 GB embeddings + 1.1 GB GUE |
+| Disk | ~55 GB free: 53 GB embeddings + 1.1 GB GUE |
 | CPU | 20 cores on the reference machine; `03_lr_sweep.py` scales with core count |
-| First run | Downloads the DNABERT-2 checkpoint (~500 MB) from HuggingFace. `HF_HUB_OFFLINE=1` works on every subsequent run. |
-| Wall clock | verify ~2 min · embed ~10 min · LR sweep ~2.0 h · MLP sweep ~51 min · tables <1 min · LoRA calibration ~11 min and full sweep ≤6.4 h (estimates) |
+| First run | Downloads the DNABERT-2 checkpoint (~500 MB) from HuggingFace. `HF_HUB_OFFLINE=1` works on every later run. |
+| Wall clock | verify ~2 min · embed ~10 min · LR sweep ~2.0 h · MLP sweep ~51 min · LoRA calibration ~67 min · LoRA full ~6.4 h · bag floor ~50 min · tables <1 min |
 
-**Only `01_verify_layers.py`, `02_embed_all.py` and `05_lora_sweep.py` need the
-GPU**, and all three exit with a clear message if none is found rather than
+**Only `01_verify_layers.py`, `02_embed_all.py` and `05_lora_sweep.py` need a
+GPU.** All three exit with a clear message if there isn't one, rather than
 falling back to a multi-day CPU run. Once `layer_embed/` exists the frozen arms
-are CPU-only, and every result is committed under `results/`, so without a card
-you can still rerun the LR and MLP arms from existing embeddings, or skip
-straight to the tables.
-
----
-
-## Headline
-
-**Where you read the model out matters far more than what you put on top of it.**
-Median effect on test MCC, measured across the sweep:
-
-| Choice | Median Δ test MCC | Max Δ | Consistency |
-|---|---|---|---|
-| Best-of-top-2 layer vs. the final layer | **+0.050** | +0.320 | helps in 102 / 104 |
-| Mean pooling vs. `[CLS]` | **+0.039** | — | helps in 142 / 156 |
-| 256-unit MLP vs. logistic regression | **−0.002** | +0.052 | helps in 67 / 156 |
-
-The two choices that cost nothing — which layer to read, how to pool — are worth
-roughly 25× the median gain from replacing logistic regression with a neural
-head. The original notebook used the final layer, which is the single worst of
-the three defaults.
-
-Frozen embeddings with the best configuration reach **88.7 % of the paper's
-fine-tuned score** on average (range 74.6–104.9 %), with no gradient ever
-flowing into DNABERT-2.
-
-## Figures
-
-- `figures/layer_profile.png` — dev MCC vs. encoder layer, per task
-- `figures/lr_vs_mlp.png` — paired LR vs. MLP test MCC over 156 cells
-- `figures/vs_paper.png` — best frozen config vs. paper Table 6, 26 datasets
-- `figures/lora_calibration.png` — LoRA dev MCC vs. learning rate against the
-  best frozen dev MCC (written by `05_lora_sweep.py --mode calibrate`)
-
-## Result 1 — the final layer is never the right layer
-
-Mean dev MCC over each task's datasets and both poolings; rank is out of 12.
-
-| Task | Best layers | Layer-12 rank | Best dev MCC | Layer-12 dev MCC |
-|---|---|---|---|---|
-| CPD | 2, 5 | 11th | 0.600 | 0.550 |
-| PD | 6, 5 | 10th | 0.786 | 0.709 |
-| TF-H | 5, 4 | 11th | 0.530 | 0.468 |
-| TF-M | 5, 3 | 12th | 0.641 | 0.468 |
-| EMP | 6, 11 | 8th | 0.470 | 0.448 |
-
-Peak probing accuracy sits at layers 2–6 for four of five tasks. TF-M is the
-extreme: layer 5 gives dev MCC 0.641 against the final layer's 0.468, a 37 %
-relative gain from readout depth alone. EMP is the only task with a near-flat
-profile, and also the hardest of the five.
-
-This reproduces, on DNABERT-2, the Nucleotide Transformer paper's observation
-that the best probing layer is never the last one.
-
-## Result 2 — the MLP head buys nothing
-
-Across 156 (dataset × pooling × layer) cells, trained on exactly the same
-cached features as the LR arm, the MLP's median advantage is −0.002 test MCC and
-it wins 67 of 156 cells. Per task it is slightly negative on TF-H (−0.015 median)
-and TF-M (−0.013), slightly positive on EMP (+0.002).
-
-Taking the best configuration per dataset, the MLP is chosen 16 times and LR 10 —
-but the margins are inside seed noise, and the MLP costs three seeds of GPU
-training per cell against a one-second CPU fit.
-
-The honest reading: with frozen embeddings and a linearly-decodable target, a
-non-linear head has nothing left to extract. The representation, not the
-classifier, is the bottleneck.
-
-## Result 3 — pooling
-
-Mean pooling beats `[CLS]` in 142 of 156 cells (median +0.039), and the gap
-widens with depth. Of the 26 best-per-dataset configurations, 24 use mean
-pooling. This is expected: DNABERT-2's checkpoint contains no trained pooler and
-its MosaicBERT pre-training is MLM-only, so no loss term ever asks position 0 to
-summarize the sequence.
-
-## Scope
-
-26 of the 28 GUE datasets: Yeast EMP (10), Mouse TF-M (5), Human TF-H (5),
-Human PD (3), Human CPD (3). Excluded by request: splice/reconstructed (SSP,
-position-specific and a poor fit for mean pooling) and virus/covid. GUE+ (EPI,
-fungi, virus/species_40) is out of scope — those sequences are 5–10 kb and
-would be truncated at 512 tokens.
-
-All 26 are binary, 2-column (`sequence`, `label`), 70–500 bp, and sit at
-0.44–0.59 positive fraction. The longest sequence observed in a 200-sequence
-sample from each of the 26 training splits tokenizes to 115 tokens (`EMP__H3`),
-against a 512 ceiling; with 4.5× headroom, nothing is truncated.
-
-## Protocol
-
-- Embeddings: `output_all_encoded_layers=True`, mask scatter-back to padded
-  `(B, T, 768)`, mask-aware mean pooling and `h[:, 0]` for `[CLS]`. fp32.
-- `StandardScaler` fit on train only, inside an sklearn `Pipeline`.
-- Dev selects; **test is scored exactly once** per selected configuration.
-- `train_model` restores the best-dev checkpoint, not the last epoch.
-- Layer ranking averages over **both** poolings, so the mean-vs-`[CLS]`
-  comparison is not confounded by depth.
-- LR grid: `C ∈ logspace(-5, 3, 9)` × `class_weight ∈ {none, balanced}`.
-- MLP: `TaperedMLP(768 → 256 → 2)`, dropout 0.1, AdamW lr 1e-3, weight decay
-  0.01, batch 32, max 200 epochs, patience 10, 3 seeds (42/43/44).
-
-### LoRA arm
-
-Fine-tunes DNABERT-2 end to end through LoRA adapters, with a trained
-classification head, as a direct comparison against the frozen probes.
-
-- PEFT: `r = 8`, `alpha = 16` (scaling 2.0, fixed), LoRA dropout 0.05,
-  `modules_to_save = ["classifier", "pooler"]`. The checkpoint ships no trained
-  pooler, so it is trained in full.
-- Two variants, each its own `model_type` in the tables:
-
-  | Variant | `model_type` | `target_modules` | Wrapped | Trainable / total | % |
-  |---|---|---|---|---|---|
-  | `attn` | `LoRA-attn` | `Wqkv` | 12 | 887,042 / 117,957,124 | 0.752 |
-  | `attn_mlp` | `LoRA-attn+mlp` | `Wqkv`, `mlp.gated_layers`, `mlp.wo` | 36 | 1,919,234 / 118,989,316 | 1.613 |
-
-  MosaicBERT fuses Q, K and V into one `attention.self.Wqkv`; a config naming
-  `query`/`key`/`value` matches nothing and silently trains only the head.
-- AdamW, weight decay 0.01, linear schedule with 6 % warmup, batch 128 with bf16
-  autocast, 5 fixed epochs (no early stopping), unweighted `CrossEntropyLoss`
-  (as in the MLP arm), max length 512, 3 seeds (42/43/44).
-- Dev is evaluated **once per epoch** and the best-dev adapter + head state is
-  restored before test is scored once. Per-epoch evaluation gives every
-  dataset the same number of selection draws (5); a step-based cadence would
-  not.
-- The learning rate is calibrated once (`05_lora_sweep.py --mode calibrate`):
-  `attn`, seed 42, lr ∈ {1e-4, 3e-4, 1e-3} on `mouse__3`,
-  `prom__prom_core_tata` and `EMP__H3K4me3` (three sizes), choosing the
-  highest mean dev MCC. That lr is then fixed for all 26 datasets. This is
-  insurance against a bad-lr false negative, not per-dataset tuning.
-- **Limitation:** both variants run at the lr calibrated for `attn`. A win for
-  `attn_mlp` is therefore a lower bound, and a loss is partly confounded with
-  learning rate.
-- Pooling is not a free choice here: the classification head reads position 0
-  through the trained pooler (`pool = "cls-trained"`). Since the frozen arm's
-  mean-over-`[CLS]` result is explained by the untrained pooler, this arm also
-  tests that explanation.
-
-### Caveats
-
-- **The dev column is a selection statistic, not a performance estimate.** Each
-  dataset receives 9 C × 2 class_weight × 12 layers × 2 poolings = 432 dev
-  evaluations, and taking the max over those is upward-biased. Test is clean.
-- The MLP and LoRA arms use an unweighted `CrossEntropyLoss` (the notebook's
-  definition) while LR searches `class_weight`. At 0.44–0.59 positive fraction this
-  asymmetry is cosmetic, but the arms are not matched on it.
-- The paper fine-tunes end-to-end and averages 3 seeds; **Table 6** is the
-  reference used here. Table 9 disagrees with it on TF-H and TF-M.
-- Assumption diagnostics (calibration, residual structure) were not assessed.
-
-## Known issues from the original notebook
-
-Applied:
-- `output_all_encoded_layers=True` — HF's `output_hidden_states` lands in
-  `**kwargs` on MosaicBERT and is silently ignored. Requires `model.pooler = None`
-  and a scatter-back from the unpadded tensors. **Verified bit-identical** at
-  layer 12 to the model's own default padded forward pass, for both poolings
-  (`max_abs_diff = 0.0`; `scripts/01_verify_layers.py`).
-- `class_weight=None` persisted as the literal `"none"`, so `pd.read_csv` no
-  longer reads it as NaN.
-- C grid widened from `logspace(-4, 2, 7)`; grid-edge selections fell from 14 %
-  to 3 % (19 of 624). `in_notebook_grid` flags the original 7 values.
-
-Not applicable to this selection, checked and recorded:
-- **The suspected sequence-pair bug does not exist.** `tok([[a, b]])` and the
-  documented `tok([a], [b])` return identical encodings, with `[SEP]` at the pair
-  boundary *and* at the end — the fast tokenizer reads a list of 2-element lists
-  as `batch_text_or_text_pairs`. See `results/epi_sep_check.txt`. Separately, no
-  in-scope dataset is a pair task.
-- GUE/GUE+ mixing — resolved by the dataset selection.
-- 512-token truncation — the longest sampled sequence is 115 tokens (see Scope).
-- Covid F1 — covid excluded; Table 12 confirms MCC for all five in-scope tasks.
-
-## Outputs
-
-**Input** files are primary evidence from the sweeps. **Derived** files are
-rebuilt from the inputs by `06_build_tables.py` in under a minute.
-
-| File | Kind | Contents |
-|---|---|---|
-| `results/lr_layer_sweep.csv` | input | 11,232 rows — the complete 12-layer LR grid |
-| `results/mlp_results.csv` | input | 468 rows — per-seed MLP runs |
-| `results/selected_layers.csv` | input | the three layers per task fed to the MLP arm |
-| `results/paper_table6_dnabert2.csv` | input | the paper's fine-tuned DNABERT-2 MCC (Table 6) |
-| `results/lora_results.csv` | input | per-seed LoRA runs, both variants (once run) |
-| `results/lora_calibration.csv` | record | lr calibration runs, with `at_grid_edge` (once run) |
-| `results/history_table.csv` | derived | 3,276 rows — the full history table (2,808 LR + 468 MLP) |
-| `results/history_table_aggregated.csv` | derived | 312 rows — seed-aggregated / cell-best companion |
-| `results/best_frozen_vs_paper.csv` | derived | 26 rows — best dev-selected frozen config per dataset vs. Table 6 |
-| `results/best_vs_paper_with_finetune.csv` | derived | written only once `lora_results.csv` exists — frozen best and best LoRA variant (`best_lora_variant`) side by side vs. Table 6 |
-| `results/mlp_batch_benchmark.csv` | record | batch 32 vs 256, 3 seeds |
-| `results/verify_layers.json` | record | layer-12 equivalence check and sampled token lengths |
-| `results/epi_sep_check.txt` | record | `[SEP]` placement for a sequence pair |
-| `layer_embed/` | local | 1,950 `.npy` files, 53 GB — regenerable in ~10 min; not committed |
-
-The sweep scripts also write per-epoch training curves
-(`results/*_histories.csv.gz`). They are local diagnostics and are not committed.
-
-### History table columns
-
-`model_type`, `task`, `dataset`, `pool`, `layer`, `layer_role`, `seed`, `C`,
-`class_weight`, `dev_mcc`, `test_mcc`, `dev_selected`, `best_epoch`,
-`epochs_run`, `early_stopped`, `batch_size`, `hidden_dims`, `dropout`, `lr`,
-`weight_decay`, `optimizer`, `max_epochs`, `patience`, `n_iter`,
-`at_grid_edge`, `in_notebook_grid`, `hyperparams`.
-
-LR rows span the full 18-point grid at each selected layer with `test_mcc`
-populated only on the dev-selected row; MLP rows carry one row per seed.
-
-LoRA rows (once `results/lora_results.csv` exists) use sentinels, because
-fine-tuning has no readout layer and no free pooling choice: `layer = 0` (real
-encoder layers are 1–12), `layer_role = "finetuned"` and `pool = "cls-trained"`
-(the stock classification head reads position 0 through a pooler that LoRA
-trains). `model_type` is `LoRA-attn` or `LoRA-attn+mlp`, so the two variants
-never share an aggregation key; `model_type.str.startswith("LoRA")` selects
-both. LoRA settings (`r`, `alpha`, `lora_dropout`, `target_modules`, warmup,
-precision) go in `hyperparams`. Once LoRA rows exist the table gains two
-columns, `trainable_params` and `pct_trainable`, which are blank for LR and MLP.
+run on CPU; the bag floor's MLP half uses a GPU if there is one. Every result is
+committed under `results/`, so without a GPU you can still rebuild the tables.
 
 ## Reproducing
 
@@ -255,26 +59,40 @@ python scripts/01_verify_layers.py     # correctness gate (GPU)
 python scripts/02_embed_all.py         # ~10 min, writes 53 GB (GPU)
 OMP_NUM_THREADS=3 python scripts/03_lr_sweep.py   # ~2.0 h (CPU)
 python scripts/04_mlp_sweep.py 32      # ~51 min
-python scripts/05_lora_sweep.py --mode calibrate          # ~11 min (GPU); stops at the decision gate
-python scripts/05_lora_sweep.py --mode full --lr <chosen> # ≤6.4 h (GPU), both variants
+python scripts/05_lora_sweep.py --mode calibrate             # ~67 min (GPU); stops at the decision gate
+python scripts/05_lora_sweep.py --mode full --lr 1e-3 --variant attn   # ~6.4 h (GPU)
+python scripts/07_bag_baseline.py      # ~50 min, LR half on CPU, MLP half on GPU if present
 python scripts/06_build_tables.py      # <1 min, rebuilds the derived tables
 ```
 
-`requirements.lock.txt` pins the full dependency closure at the versions that
-produced `results/` (`pip install -r requirements.lock.txt` before
-`pip install -e .` for an exact environment). Install editable: the package
-resolves its default paths from the repo root and refuses to run from a
-non-editable install. After the first run, `HF_HUB_OFFLINE=1` skips the
-HuggingFace check.
+| Script | Does |
+|---|---|
+| `00_get_gue.py` | Prints GUE download steps and checks that all 26 datasets are present in `data/GUE` |
+| `smoke_test.py` | Embeds `mouse__3` into a temp dir and runs one LR cell, to check the install end to end |
+| `01_verify_layers.py` | Checks that the all-layer embedding path matches the model's own forward pass bit for bit; also audits token lengths and `[SEP]` placement |
+| `02_embed_all.py` | Writes mean- and `[CLS]`-pooled embeddings for all 12 layers to `layer_embed/` |
+| `03_lr_sweep.py` | Logistic-regression grid over every dataset × layer × pooling |
+| `04_mlp_sweep.py` | MLP at the three layers per task in `results/selected_layers.csv`, 3 seeds |
+| `05_lora_sweep.py` | `--mode calibrate` picks the learning rate on three datasets and checks a decision gate; `--mode full` runs all 26 datasets × 3 seeds |
+| `06_build_tables.py` | Rebuilds the derived tables from the input CSVs |
+| `07_bag_baseline.py` | Bag-of-tokens floor: every featurization × LR grid and MLP |
 
-`02_embed_all.py`, `03_lr_sweep.py`, `04_mlp_sweep.py` and `05_lora_sweep.py`
-all resume from partial state. `03_lr_sweep.py` runs `cpu_count // 3` parallel jobs by default
-(6 jobs × `OMP_NUM_THREADS=3` was measured best on 20 cores); set
-`SWEEP_N_JOBS` to override. Timings were measured on an RTX 4080 / 20 CPU cores.
+`06_build_tables.py` reads whichever LoRA and bag outputs exist, so you can run
+it at any point. `requirements.lock.txt` pins the full dependency closure at
+the versions that produced `results/`. For an exact environment, run
+`pip install -r requirements.lock.txt` before `pip install -e .`. The install
+must be editable: the package resolves its default paths from the repo root and
+refuses to run from a non-editable install.
+
+`02_embed_all.py`, `03_lr_sweep.py`, `04_mlp_sweep.py`, `05_lora_sweep.py` and
+`07_bag_baseline.py` all resume from partial state. `03_lr_sweep.py` and
+`07_bag_baseline.py` run `cpu_count // 3` parallel jobs by default (6 jobs ×
+`OMP_NUM_THREADS=3` measured best on 20 cores); set `SWEEP_N_JOBS` to override.
+Timings were measured on an RTX 4080 with 20 CPU cores.
 
 ### Paths
 
-With the default layout nothing needs to be set: GUE goes in `data/GUE`, and
+With the default layout nothing needs to be set: GUE goes in `data/GUE` and
 embeddings in `layer_embed/`, both gitignored. The variables are an escape
 hatch for data that must live elsewhere (cluster scratch, another volume).
 
@@ -284,3 +102,81 @@ hatch for data that must live elsewhere (cluster scratch, another volume).
 | `DNABERT2_EMBED_DIR` | `layer_embed` | cached per-layer embeddings (53 GB) |
 | `DNABERT2_RESULTS_DIR` | `results` | sweep outputs and derived tables |
 | `DNABERT2_FIGURES_DIR` | `figures` | figure output |
+
+## Figures
+
+| File | Shows | Written by |
+|---|---|---|
+| `figures/layer_profile.png` | dev MCC vs. encoder layer, per task | no script (see TODO) |
+| `figures/lr_vs_mlp.png` | paired LR vs. MLP test MCC, per cell | no script (see TODO) |
+| `figures/vs_paper.png` | best frozen config vs. paper Table 6, per dataset | no script (see TODO) |
+| `figures/lora_calibration.png` | LoRA dev MCC vs. learning rate, against the best frozen dev MCC | `05_lora_sweep.py --mode calibrate` |
+
+## Outputs
+
+**Input** files are primary evidence from the sweeps. **Derived** files are
+rebuilt from the inputs by `06_build_tables.py`. **Record** files document a
+check or a one-off run.
+
+| File | Kind | Contents |
+|---|---|---|
+| `results/lr_layer_sweep.csv` | input | the complete 12-layer LR grid (11,232 rows) |
+| `results/mlp_results.csv` | input | per-seed MLP runs (468 rows) |
+| `results/lora_results.csv` | input | per-seed LoRA runs, 26 datasets × 3 seeds (78 rows) |
+| `results/bag_results.csv` | input | per-dataset selected bag rows for every featurization: LR, and MLP per seed (520 rows) |
+| `results/selected_layers.csv` | input | the three layers per task fed to the MLP arm |
+| `results/paper_table6_dnabert2.csv` | input | the paper's fine-tuned DNABERT-2 MCC (Table 6) |
+| `results/history_table.csv` | derived | every arm in one long table |
+| `results/history_table_aggregated.csv` | derived | seed-aggregated, best per cell |
+| `results/best_frozen_vs_paper.csv` | derived | best dev-selected frozen config per dataset vs. Table 6 |
+| `results/best_vs_paper_with_finetune.csv` | derived | best frozen and best LoRA side by side vs. Table 6 |
+| `results/bag_best_per_dataset.csv` | derived | best bag config per dataset for each bag `model_type` |
+| `results/lora_calibration.csv` | record | the learning-rate calibration runs, with `at_grid_edge` |
+| `results/bag_lr_grid.csv` | record | every bag LR grid point |
+| `results/embed_manifest.csv` | record | per-split sequence counts, token lengths and embedding throughput |
+| `results/layer_profile_task.csv` | record | per-task mean dev MCC by layer |
+| `results/mlp_batch_benchmark.csv`, `mlp_batch_projection.json` | record | MLP batch-size benchmark and projected sweep cost |
+| `results/verify_layers.json` | record | output of `01_verify_layers.py` |
+| `results/epi_sep_check.txt` | record | `[SEP]` placement for a sequence pair |
+| `layer_embed/` | local | 1,950 `.npy` files, 53 GB; regenerable in ~10 min; not committed |
+
+The sweep scripts also write per-epoch training curves
+(`results/*_histories.csv.gz`) and per-cell resume state (`results/lr_cells/`,
+`results/bag_lr_cells/`). These stay local and are not committed.
+
+### History table columns
+
+`model_type`, `task`, `dataset`, `pool`, `layer`, `layer_role`, `seed`, `C`,
+`class_weight`, `dev_mcc`, `test_mcc`, `dev_selected`, `best_epoch`,
+`epochs_run`, `early_stopped`, `batch_size`, `hidden_dims`, `dropout`, `lr`,
+`weight_decay`, `optimizer`, `max_epochs`, `patience`, `n_iter`,
+`at_grid_edge`, `in_notebook_grid`, `hyperparams`, `trainable_params`,
+`pct_trainable`, `feat`, `n_features`.
+
+- **LR** rows cover the full 18-point grid at each selected layer; `test_mcc` is
+  filled only on the dev-selected row. **MLP** rows are one per seed.
+- **LoRA** rows use placeholder values, because fine-tuning has no readout layer
+  and no free pooling choice: `layer = 0` (real encoder layers are 1–12),
+  `layer_role = "finetuned"`, `pool = "cls-trained"`. LoRA settings go in
+  `hyperparams`. `trainable_params` and `pct_trainable` are filled only for
+  LoRA.
+- **Bag** rows use `layer = -1`, `layer_role = "bag"`, `pool = "bag"`, with the
+  featurization in `feat` and its width in `n_features`.
+- `class_weight=None` is stored as the literal string `"none"`, so `pd.read_csv`
+  does not read it as NaN.
+
+## TODO
+
+- **Confirm the blog post URL** at the top of this file.
+- **Fill in the clone URL** in Reproducing (`<this repo>`).
+- **Add a script for the three frozen-sweep figures.** No script in the repo
+  produces `layer_profile.png`, `lr_vs_mlp.png` or `vs_paper.png`, and their
+  source isn't in the repo.
+- **Bring the figures up to date with the later arms.** `vs_paper.png` shows the
+  frozen arm only; there is no figure for the LoRA or bag-of-tokens results.
+- **Run the `attn_mlp` LoRA variant, or remove it.** `05_lora_sweep.py
+  --variant attn_mlp` (adapters on the MLP blocks as well as attention) is
+  implemented but has never been run, and every LoRA result is `attn`.
+- **Reconcile the two token-length records.** `01_verify_layers.py` samples 200
+  training sequences per dataset (`verify_layers.json`: max 115 tokens), while
+  `embed_manifest.csv` covers every sequence in every split (max 116).

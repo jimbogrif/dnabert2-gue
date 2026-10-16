@@ -19,6 +19,7 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+from transformers import AutoModel
 
 import dnabert2_gue as SL
 
@@ -37,8 +38,6 @@ report = {"torch": torch.__version__, "cuda": torch.cuda.is_available()}
 # Reference: the stock model in default mode, loaded independently of
 # load_model() because that one drops the pooler (which raises on unpadded
 # tensors). Only the Triton fix is applied.
-from transformers import AutoModel                              # noqa: E402
-
 ref_model = AutoModel.from_pretrained(SL.MODEL_NAME, trust_remote_code=True)
 sys.modules[ref_model.__class__.__module__].flash_attn_qkvpacked_func = None
 ref_model = ref_model.to("cuda").eval()

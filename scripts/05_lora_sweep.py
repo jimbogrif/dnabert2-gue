@@ -55,12 +55,16 @@ import os
 import sys
 import time
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 
 import dnabert2_gue as SL
 from dnabert2_gue.lora import RESULT_COLS
+
+matplotlib.use("Agg")   # non-interactive; safe to switch after importing pyplot
 
 CALIB = os.path.join(SL.RESULTS_DIR, "lora_calibration.csv")
 CALIB_HIST = os.path.join(SL.RESULTS_DIR, "lora_calibration_histories.csv.gz")
@@ -166,10 +170,6 @@ def calibrate():
     print(f"\nchosen lr = {chosen:g}  (highest mean dev MCC)  at_grid_edge = {at_edge}")
 
     # ---- figure ---------------------------------------------------------------
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     ds = list(SL.LORA_CALIB_DATASETS)
     fig, axes = plt.subplots(1, len(ds), figsize=(4 * len(ds), 3.4), sharex=True)
     for ax, d in zip(axes, ds):

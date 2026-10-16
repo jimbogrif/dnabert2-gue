@@ -33,6 +33,7 @@ import time
 
 import pandas as pd
 from joblib import Parallel, delayed
+from transformers import AutoTokenizer
 
 import dnabert2_gue as SL
 from dnabert2_gue.bags import FEATS, grid_search_bag, run_bag_mlp
@@ -57,7 +58,6 @@ NEEDS_TOK = "bpe" in args.feats
 
 def _tok():
     """DNABERT-2's tokenizer -- no model, no forward pass, CPU only."""
-    from transformers import AutoTokenizer
     return AutoTokenizer.from_pretrained(SL.MODEL_NAME, trust_remote_code=True)
 
 

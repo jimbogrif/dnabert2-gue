@@ -36,9 +36,16 @@ import os
 
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, TensorDataset
 
 from .config import DATASET_TASK, GUE_ROOT, SPLITS, manifest
 from .linear import CLASS_WEIGHTS, CS, fit_lr_grid
+from .mlp import (MLP_DIMS, MLP_DROPOUT, MLP_LR, MLP_MAX_EPOCHS, MLP_PATIENCE,
+                  MLP_WEIGHT_DECAY, TaperedMLP, evaluate, train_model)
 
 KS = (3, 4, 5, 6)
 FEATS = tuple(f"kmer{k}" for k in KS) + ("bpe",)
@@ -135,21 +142,11 @@ def run_bag_mlp(dataset, feat, seed, tok=None, batch_size=32, device=None,
                 debug=False):
     """The frozen arm's TaperedMLP on bag features; returns (row, history).
 
-    Borrows mlp.train_model / evaluate / _build_mlp_class and the MLP_*
+    Borrows mlp.train_model / evaluate / TaperedMLP and the MLP_*
     constants unchanged -- run_mlp itself cannot be reused because its
     (dataset, pool, layer) signature loads from the .npy cache, and the bag
     features are deliberately never written to disk.
     """
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-    from sklearn.preprocessing import StandardScaler
-    from torch.utils.data import DataLoader, TensorDataset
-
-    from .mlp import (MLP_DIMS, MLP_DROPOUT, MLP_LR, MLP_MAX_EPOCHS,
-                      MLP_PATIENCE, MLP_WEIGHT_DECAY, _build_mlp_class,
-                      evaluate, train_model)
-
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(seed)
 
@@ -161,8 +158,8 @@ def run_bag_mlp(dataset, feat, seed, tok=None, batch_size=32, device=None,
 
     loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=batch_size, shuffle=True)
     criterion = nn.CrossEntropyLoss()
-    model = _build_mlp_class()(X_tr.shape[1], int(len(torch.unique(y_tr))),
-                               dims=MLP_DIMS, dropout=MLP_DROPOUT).to(device)
+    model = TaperedMLP(X_tr.shape[1], int(len(torch.unique(y_tr))),
+                       dims=MLP_DIMS, dropout=MLP_DROPOUT).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=MLP_LR, weight_decay=MLP_WEIGHT_DECAY)
 
     model, best_epoch, history = train_model(

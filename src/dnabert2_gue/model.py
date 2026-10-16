@@ -12,6 +12,9 @@ Two of the three documented fixes relative to the original notebook live here:
 
 import sys
 
+import torch
+from transformers import AutoModel, AutoTokenizer
+
 from .config import MODEL_NAME
 
 # --------------------------------------------------------------------------
@@ -27,9 +30,6 @@ def load_model(device=None):
 
     ``device=None`` auto-detects (cuda if available, else cpu).
     """
-    import torch
-    from transformers import AutoTokenizer, AutoModel
-
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     model = AutoModel.from_pretrained(MODEL_NAME, trust_remote_code=True)
@@ -46,8 +46,6 @@ def embed_batch_layers(seqs, tok, model, max_length=512, device=None):
     Returns (mean, cls) each shaped (n_layers, B, 768) as float32 cpu tensors,
     plus the per-sequence token count. ``device=None`` auto-detects.
     """
-    import torch
-
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     enc = tok(seqs, return_tensors="pt", padding=True,
               truncation=True, max_length=max_length).to(device)

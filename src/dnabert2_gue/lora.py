@@ -32,14 +32,20 @@ Implementation notes (learned the hard way, do not rediscover):
 - Pooling is not a free choice once you fine-tune: the SEQ_CLS head reads
   position 0 through the (trained) pooler, so rows carry
   ``pool="cls-trained"`` and the sentinel ``layer=0``.
-
-Every torch / transformers / peft import is inside a function body so that
-importing the package does not require torch.
 """
 
 import os
+import sys
 
 import pandas as pd
+import torch
+import torch.nn as nn
+from peft import LoraConfig, get_peft_model
+from peft.tuners.lora import LoraLayer
+from sklearn.metrics import matthews_corrcoef
+from torch.utils.data import DataLoader
+from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
+                          get_linear_schedule_with_warmup)
 
 from .config import (DATASET_TASK, LORA_ALPHA, LORA_BATCH, LORA_DROPOUT,
                      LORA_MAX_EPOCHS, LORA_MAX_LENGTH, LORA_PATIENCE, LORA_R,
@@ -65,7 +71,6 @@ RESULT_COLS = [
 
 
 def _autocast(device):
-    import torch
     return torch.autocast(device.type, dtype=torch.bfloat16,
                           enabled=device.type == "cuda")
 
@@ -75,7 +80,7 @@ def warmup_steps(warmup_ratio, total_steps):
 
 
 # Store GUE Sequence + Label CSVs as a map-style dataset (DataLoader needs only
-# __len__/__getitem__, so no torch base class and no import-time torch).
+# __len__/__getitem__, so no torch base class).
 class SeqDataset:
     """Raw sequences + labels from a 2-column (sequence, label) split."""
     def __init__(self, df):
@@ -89,8 +94,6 @@ class SeqDataset:
 
 def make_collate(tok, max_length=LORA_MAX_LENGTH):
     """Tokenize a batch of (sequence, label) pairs for DataLoader."""
-    import torch
-
     def collate(batch):
         a, y = zip(*batch)
         enc = tok(list(a), return_tensors="pt", padding=True, truncation=True,
@@ -109,12 +112,6 @@ def build_lora_model(n_classes, target_modules, r=LORA_R, alpha=LORA_ALPHA,
     {'trainable_params', 'total_params', 'pct_trainable', 'matched_modules',
      'breakdown'}).
     """
-    import sys
-
-    from peft import LoraConfig, get_peft_model
-    from peft.tuners.lora import LoraLayer
-    from transformers import AutoModelForSequenceClassification
-
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name or MODEL_NAME,
         num_labels=n_classes,
@@ -172,10 +169,6 @@ def train_lora(model,
     Return (model with best-dev state restored, best MCC, best epoch, history,
     early_stopped).
     """
-    import torch
-    import torch.nn as nn
-    from transformers import get_linear_schedule_with_warmup
-
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     total_steps = len(train_loader) * epochs
@@ -223,9 +216,6 @@ def train_lora(model,
 
 # Evaluation protocol
 def evaluate(model, loader, device):
-    import torch
-    from sklearn.metrics import matthews_corrcoef
-
     model.eval()
     preds, ys = [], []
     with torch.no_grad(), _autocast(device):
@@ -249,10 +239,6 @@ def run_lora(dataset, seed, lr, variant="attn",
     -- fine-tuning has neither. ``device=None`` auto-detects; bf16 autocast is
     used only on CUDA, and ``precision`` records what actually ran.
     """
-    import torch
-    from torch.utils.data import DataLoader
-    from transformers import AutoTokenizer
-
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     target_modules = LORA_VARIANTS[variant]
 

@@ -6,8 +6,7 @@ it neither depends on nor pollutes the embedding cache -- then runs
 grid_search_lr on one layer/pooling cell and asserts a loose dev-MCC floor.
 
 This is a "the pipeline is wired up" check (install, lock file, weight
-download, Triton fix, device auto-detect, lazy imports), not a performance
-claim. Runs on CPU too, slowly; target is under two minutes on a GPU.
+download, Triton fix, device auto-detect), not a performance claim. Runs on CPU too, slowly; target is under two minutes on a GPU.
 """
 
 import os
@@ -17,6 +16,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import torch
 
 import dnabert2_gue as SL
 
@@ -26,7 +26,6 @@ FLOOR = 0.30
 BATCH = 64
 
 t0 = time.time()
-import torch                                                   # noqa: E402
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tok, model = SL.load_model()
