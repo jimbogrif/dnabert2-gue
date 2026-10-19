@@ -12,3 +12,4 @@ __pycache__/
 .env
 *.egg-info/
 *log
+claude_plan*
