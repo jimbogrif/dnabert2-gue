@@ -39,18 +39,33 @@ import dnabert2_gue as SL
 from dnabert2_gue.bags import FEATS, grid_search_bag, run_bag_mlp
 
 LR_CELLS = os.path.join(SL.RESULTS_DIR, "bag_lr_cells")
-LR_GRID = os.path.join(SL.RESULTS_DIR, "bag_lr_grid.csv")
-OUT = os.path.join(SL.RESULTS_DIR, "bag_results.csv")
-HIST = os.path.join(SL.RESULTS_DIR, "bag_histories.csv.gz")
 SEEDS = (42, 43, 44)
 
 ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
 ap.add_argument("--heads", nargs="+", choices=["lr", "mlp"], default=["lr", "mlp"])
 ap.add_argument("--feats", nargs="+", choices=list(FEATS), default=list(FEATS))
+ap.add_argument("--datasets", nargs="+", default=None,
+                help="default: the 26 in-scope datasets. Naming others (e.g. "
+                     "splice__reconstructed, which is 3-class) only works "
+                     "alongside --out-suffix, so their rows cannot land in "
+                     "the binary benchmark's own tables.")
+ap.add_argument("--out-suffix", default="",
+                help="appended to bag_lr_grid / bag_results / bag_histories")
 ap.add_argument("--jobs", type=int, default=int(os.environ.get("SWEEP_N_JOBS",
                                                  max(1, (os.cpu_count() or 4) // 3))))
 ap.add_argument("--debug", action="store_true")
 args = ap.parse_args()
+
+DATASETS = args.datasets or [d for _, d, _ in SL.manifest()]
+if args.datasets and not args.out_suffix:
+    ap.error("--datasets requires --out-suffix; writing a non-default dataset "
+             "set into bag_results.csv would silently redefine the floor that "
+             "06_build_tables.py reads")
+
+sfx = args.out_suffix
+LR_GRID = os.path.join(SL.RESULTS_DIR, f"bag_lr_grid{sfx}.csv")
+OUT = os.path.join(SL.RESULTS_DIR, f"bag_results{sfx}.csv")
+HIST = os.path.join(SL.RESULTS_DIR, f"bag_histories{sfx}.csv.gz")
 
 os.makedirs(LR_CELLS, exist_ok=True)
 NEEDS_TOK = "bpe" in args.feats
@@ -80,8 +95,8 @@ def lr_cell(dataset, feat):
 
 
 if "lr" in args.heads:
-    cells = [(d, f) for _, d, _ in SL.manifest() for f in args.feats]
-    print(f"LR half: {len(cells)} cells ({len(args.feats)} feats x 26 datasets), "
+    cells = [(d, f) for d in DATASETS for f in args.feats]
+    print(f"LR half: {len(cells)} cells ({len(args.feats)} feats x {len(DATASETS)} datasets), "
           f"n_jobs={args.jobs}", flush=True)
     t0 = time.time()
     paths = Parallel(n_jobs=args.jobs, verbose=0)(
@@ -105,7 +120,7 @@ if "mlp" in args.heads:
         hists = [pd.read_csv(HIST)]
 
     tok = _tok() if NEEDS_TOK else None
-    plan = [(d, f, s) for _, d, _ in SL.manifest() for f in args.feats for s in SEEDS]
+    plan = [(d, f, s) for d in DATASETS for f in args.feats for s in SEEDS]
     print(f"MLP half: {len(plan)} runs planned", flush=True)
     t0, n_new = time.time(), 0
     for i, (d, f, s) in enumerate(plan, 1):

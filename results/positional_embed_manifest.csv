@@ -1,0 +1,10 @@
+task,dataset,split,n,bp,readouts_written,checked_vs_cache,max_abs_drift,windows,window_bp,tok_med,tok_max,truncated,empty_windows,seconds,seq_per_s
+SSP,splice__reconstructed,train,36496,400,mean+cls+win8,,,8,50.0,82.0,98,0,0,45.6,800.0
+SSP,splice__reconstructed,dev,4562,400,mean+cls+win8,,,8,50.0,82.0,95,0,0,5.8,781.4
+SSP,splice__reconstructed,test,4562,400,mean+cls+win8,,,8,50.0,82.0,95,0,0,5.9,776.9
+PD,prom__prom_300_all,train,47356,300,win8,mean+cls,0.0,8,37.5,66.0,78,0,0,52.3,906.3
+PD,prom__prom_300_all,dev,5920,300,win8,mean+cls,0.0,8,37.5,66.0,79,0,0,6.7,888.2
+PD,prom__prom_300_all,test,5920,300,win8,mean+cls,0.0,8,37.5,66.0,77,0,0,6.7,880.1
+TF-H,tf__0,train,32378,101,win8,mean+cls,0.0,8,12.62,24.0,30,0,0,19.8,1631.5
+TF-H,tf__0,dev,1000,101,win8,mean+cls,0.0,8,12.62,24.0,30,0,0,0.7,1504.8
+TF-H,tf__0,test,1000,101,win8,mean+cls,0.0,8,12.62,24.0,29,0,0,0.7,1458.7

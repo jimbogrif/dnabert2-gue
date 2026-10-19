@@ -80,6 +80,11 @@ ap.add_argument("--lrs", type=float, nargs="+", default=list(SL.LORA_CALIB_LRS),
 ap.add_argument("--lr", type=float, help="calibrated lr (full mode)")
 ap.add_argument("--variant", choices=["attn", "attn_mlp", "both"], default="both")
 ap.add_argument("--debug", action="store_true", help="print per-epoch progress")
+ap.add_argument("--datasets", nargs="+", default=None,
+                help="default: the 26 in-scope datasets. Others (e.g. "
+                     "splice__reconstructed) are appended to the same "
+                     "results file; the resume key is (dataset, variant, "
+                     "seed, lr) so nothing already run is repeated.")
 args = ap.parse_args()
 if args.mode == "full" and args.lr is None:
     ap.error("--mode full requires --lr (the value chosen by --mode calibrate)")
@@ -215,8 +220,9 @@ def calibrate():
 
 def full():
     variants = ["attn", "attn_mlp"] if args.variant == "both" else [args.variant]
+    datasets = args.datasets or [d for _, d, _ in SL.manifest()]
     plan = [(d, s, v, args.lr)
-            for _, d, _ in SL.manifest()
+            for d in datasets
             for v in variants
             for s in SL.LORA_SEEDS]
     run_plan(plan, OUT, HIST)

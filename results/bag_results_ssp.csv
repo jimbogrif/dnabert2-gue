@@ -1,0 +1,17 @@
+dataset,task,pool,layer,feat,n_features,windows_dropped,C,class_weight,dev_mcc,test_mcc,n_iter,at_grid_edge,in_notebook_grid,selected,head_type,seed,batch_size,best_epoch,epochs_run,early_stopped,hidden_dims,dropout,lr,weight_decay,optimizer,max_epochs,patience,wall_s
+splice__reconstructed,SSP,bag,-1,kmer3,64,0,1000.0,balanced,0.1300671788605416,0.141729586574266,43.0,True,False,True,LR,,,,,,,,,,,,,
+splice__reconstructed,SSP,bag,-1,kmer3,64,0,,,0.22339534682288809,0.23096649020596277,,,,,MLP,42,32.0,24.0,34.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,18.2
+splice__reconstructed,SSP,bag,-1,kmer3,64,0,,,0.2150689799908067,0.22196028670788218,,,,,MLP,43,32.0,16.0,26.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,14.2
+splice__reconstructed,SSP,bag,-1,kmer3,64,0,,,0.20836627822254553,0.23601591374465775,,,,,MLP,44,32.0,22.0,32.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,16.5
+splice__reconstructed,SSP,bag,-1,kmer4,256,0,0.1,balanced,0.1993071378835385,0.2120742929653017,91.0,False,True,True,LR,,,,,,,,,,,,,
+splice__reconstructed,SSP,bag,-1,kmer4,256,0,,,0.30425862010446403,0.30072470566990067,,,,,MLP,42,32.0,20.0,30.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,16.5
+splice__reconstructed,SSP,bag,-1,kmer4,256,0,,,0.2867664104469757,0.3186999789390959,,,,,MLP,43,32.0,14.0,24.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,14.9
+splice__reconstructed,SSP,bag,-1,kmer4,256,0,,,0.2916430677648555,0.31830938600709885,,,,,MLP,44,32.0,14.0,24.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,13.6
+splice__reconstructed,SSP,bag,-1,kmer5,1024,0,1.0,balanced,0.2375023023380478,0.2471531895971361,176.0,False,True,True,LR,,,,,,,,,,,,,
+splice__reconstructed,SSP,bag,-1,kmer5,1024,0,,,0.35461307165479933,0.34066435307431836,,,,,MLP,42,32.0,15.0,25.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,14.7
+splice__reconstructed,SSP,bag,-1,kmer5,1024,0,,,0.34333330837835324,0.33830811976576625,,,,,MLP,43,32.0,19.0,29.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,17.0
+splice__reconstructed,SSP,bag,-1,kmer5,1024,0,,,0.33496589058431836,0.3381426370372193,,,,,MLP,44,32.0,6.0,16.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,9.8
+splice__reconstructed,SSP,bag,-1,kmer6,4096,0,0.0001,balanced,0.2673415944057375,0.2938039763428586,29.0,False,True,True,LR,,,,,,,,,,,,,
+splice__reconstructed,SSP,bag,-1,kmer6,4096,0,,,0.3559558101945846,0.37063438446100766,,,,,MLP,42,32.0,34.0,44.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,30.0
+splice__reconstructed,SSP,bag,-1,kmer6,4096,0,,,0.3449971791751876,0.3811705686517263,,,,,MLP,43,32.0,9.0,19.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,14.2
+splice__reconstructed,SSP,bag,-1,kmer6,4096,0,,,0.3575519396221311,0.3367778070092291,,,,,MLP,44,32.0,7.0,17.0,True,256,0.1,0.001,0.01,AdamW,200.0,10.0,12.9

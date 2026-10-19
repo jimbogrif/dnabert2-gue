@@ -47,7 +47,7 @@ from torch.utils.data import DataLoader
 from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
                           get_linear_schedule_with_warmup)
 
-from .config import (DATASET_TASK, LORA_ALPHA, LORA_BATCH, LORA_DROPOUT,
+from .config import (DATASET_TASK, dataset_dir, LORA_ALPHA, LORA_BATCH, LORA_DROPOUT,
                      LORA_MAX_EPOCHS, LORA_MAX_LENGTH, LORA_PATIENCE, LORA_R,
                      LORA_VARIANTS, LORA_WARMUP_RATIO, LORA_WEIGHT_DECAY,
                      MODEL_NAME, SPLITS, manifest)
@@ -134,12 +134,20 @@ def build_lora_model(n_classes, target_modules, r=LORA_R, alpha=LORA_ALPHA,
                  else "classifier" if "classifier" in n else "other")
             breakdown[k] += p.numel()
 
-    if r == 8 and n_classes == 2:
+    if r == 8:
+        # The classifier is the only part whose size depends on the number of
+        # classes: 768 x n + n, i.e. 769 more parameters per class beyond the
+        # binary case. It counts ONCE in the trainable total and TWICE in the
+        # overall total, because `modules_to_save` keeps the frozen original
+        # alongside the trainable copy -- measured, not assumed: 3-class splice
+        # reports 887,811 trainable of 117,958,662.
+        extra = 769 * (n_classes - 2)
         if list(target_modules) == ["Wqkv"]:
-            assert (trainable, total) == (ATTN_TRAINABLE, ATTN_TOTAL), \
+            assert (trainable, total) == (ATTN_TRAINABLE + extra,
+                                          ATTN_TOTAL + 2 * extra), \
                 f"attn wiring changed: {trainable:,} / {total:,} ({breakdown})"
         elif "Wqkv" in target_modules:
-            assert trainable > ATTN_TRAINABLE, \
+            assert trainable > ATTN_TRAINABLE + extra, \
                 f"{target_modules} trains no more than attn alone ({breakdown})"
 
     return model, {"trainable_params": int(trainable), "total_params": int(total),
@@ -164,7 +172,7 @@ def train_lora(model,
     the MLP arm's ``train_model`` does; ``epochs`` is a backstop, not a budget.
     The LR schedule is still built over ``len(train_loader) * epochs``, so an
     early-stopped run simply never reaches the tail of the decay — the same
-    behaviour early stopping has in any warmup+decay setup.
+    behavior early stopping has in any warmup+decay setup.
 
     Return (model with best-dev state restored, best MCC, best epoch, history,
     early_stopped).
@@ -245,10 +253,13 @@ def run_lora(dataset, seed, lr, variant="attn",
     g = torch.Generator().manual_seed(seed)
     torch.manual_seed(seed)
 
-    path = {key: p for _, key, p in manifest()}[dataset]
+    path = dataset_dir(dataset)
     df_tr, df_dev, df_test = (pd.read_csv(os.path.join(path, f"{s}.csv")) for s in SPLITS)
     n_classes = int(df_tr["label"].nunique())
-    assert n_classes == 2, f"{dataset}: expected a binary task, got {n_classes} classes"
+    # Multiclass is supported (matthews_corrcoef and CrossEntropyLoss are both
+    # class-count agnostic); the 26 in-scope GUE datasets are binary and SSP
+    # splice is 3-class.
+    assert n_classes >= 2, f"{dataset}: got {n_classes} classes"
 
     tok = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     collate = make_collate(tok, max_length)

@@ -48,21 +48,49 @@ TASKS = {
     "CPD":  ("prom", ["prom_core_all", "prom_core_notata", "prom_core_tata"]),
 }
 
+# Splice-site prediction is deliberately NOT in TASKS: it is 3-class where all
+# 26 above are binary, so folding it in would silently change what every
+# aggregate over manifest() means. It is declared separately and reached only
+# by the positional-readout arm, which asks for it by name.
+EXTRA_TASKS = {
+    "SSP": ("splice", ["reconstructed"]),
+}
 
-def manifest():
+
+def manifest(include_extra=False):
     """[(task, dataset_key, csv_dir), ...] for the 26 in-scope datasets.
 
     ``dataset_key`` matches the original notebook's "<category>__<dataset>"
     convention so filenames stay comparable with its cached embeddings.
+
+    ``include_extra=True`` appends EXTRA_TASKS (currently SSP). It defaults to
+    False because every existing arm iterates this function to enumerate its
+    work, and those arms are defined over the 26 binary datasets.
     """
     rows = []
-    for task, (cat, names) in TASKS.items():
+    tasks = {**TASKS, **EXTRA_TASKS} if include_extra else TASKS
+    for task, (cat, names) in tasks.items():
         for n in names:
             rows.append((task, f"{cat}__{n}", os.path.join(GUE_ROOT, cat, n)))
     return rows
 
 
-DATASET_TASK = {key: task for task, key, _ in manifest()}
+def dataset_dir(dataset):
+    """CSV directory for a dataset key, in-scope or extra.
+
+    Call sites that need a path for a single named dataset should use this
+    rather than indexing ``manifest()``, so they keep working for SSP.
+    """
+    paths = {key: p for _, key, p in manifest(include_extra=True)}
+    if dataset not in paths:
+        raise KeyError(f"unknown dataset {dataset!r}; "
+                       f"known: {sorted(paths)}")
+    return paths[dataset]
+
+
+# Lookup only -- includes the extra datasets so task labelling works for them.
+# Nothing should iterate this to enumerate the benchmark; use manifest().
+DATASET_TASK = {key: task for task, key, _ in manifest(include_extra=True)}
 
 
 # --------------------------------------------------------------------------
@@ -86,3 +114,33 @@ LORA_VARIANTS = {
     "attn":     ["Wqkv"],
     "attn_mlp": ["Wqkv", "mlp.gated_layers", "mlp.wo"],
 }
+
+
+# --------------------------------------------------------------------------
+# Positional-readout arm
+# --------------------------------------------------------------------------
+#
+# Asks whether whole-sequence mean pooling discards positional information
+# that a frozen DNABERT-2 embedding actually carries. Three datasets spanning
+# the measured range of how positional a GUE task is -- share of per-position
+# information content falling in the top 20 positions, over the uniform
+# expectation 20/L for that sequence length:
+#
+#   splice__reconstructed  400 bp   15.5x   (donor/acceptor at a fixed index)
+#   prom__prom_300_all     300 bp    2.8x   (weak anchor near the 3' end)
+#   tf__0                  101 bp    1.1x   (no positional anchor)
+#
+# Windows are a UNIFORM tiling, identical rule for all three datasets. An
+# anchor on splice's known junction would score better but is a task-informed
+# choice the controls cannot have, which is exactly the comparison at issue.
+
+POSITIONAL_DATASETS = ("splice__reconstructed", "prom__prom_300_all", "tf__0")
+POSITIONAL_N_WINDOWS = 8     # 50 bp on splice, 37.5 on PD, 12.6 on tf__0
+POSITIONAL_SHUFFLE_SEED = 0  # per-sequence window permutation for the control
+
+# Stored readouts; the two derived ones are reconstructed from the win cache
+# at probe time rather than written to disk (saves a second 41 GB pass).
+POSITIONAL_STORED = ("mean", "cls", f"win{POSITIONAL_N_WINDOWS}")
+POSITIONAL_DERIVED = (f"win{POSITIONAL_N_WINDOWS}_best",    # dev picks 1 window
+                      f"win{POSITIONAL_N_WINDOWS}shuf")     # dimension control
+POSITIONAL_READOUTS = POSITIONAL_STORED + POSITIONAL_DERIVED

@@ -17,8 +17,8 @@ Design notes:
   - **Frequencies, not raw counts.** 10 of the 26 datasets (all of EMP) are
     variable length, 290-500 bp, so raw counts would smuggle sequence length in
     as a feature on exactly the task family where the embedding arms are
-    weakest. L1-normalising per sequence also aligns with the embedding arm,
-    which is mean-pooled and therefore length-normalised in the same sense.
+    weakest. L1-normalizing per sequence also aligns with the embedding arm,
+    which is mean-pooled and therefore length-normalized in the same sense.
   - **No disk cache.** The embedding arm caches 53 GB because a forward pass
     through 117M parameters is expensive; counting k-mers is not (~0.3 min for
     all 762,523 sequences at k=6). Featurize one dataset, fit, discard. The
@@ -42,7 +42,7 @@ import torch.optim as optim
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
-from .config import DATASET_TASK, GUE_ROOT, SPLITS, manifest
+from .config import DATASET_TASK, GUE_ROOT, SPLITS, dataset_dir
 from .linear import CLASS_WEIGHTS, CS, fit_lr_grid
 from .mlp import (MLP_DIMS, MLP_DROPOUT, MLP_LR, MLP_MAX_EPOCHS, MLP_PATIENCE,
                   MLP_WEIGHT_DECAY, TaperedMLP, evaluate, train_model)
@@ -94,7 +94,7 @@ def bpe_matrix(seqs, tok, normalize=True, dtype=np.float32, batch=1024):
 
 def load_sequences(dataset, split):
     """(sequences, labels) for one GUE split, located via manifest()."""
-    path = {key: p for _, key, p in manifest()}[dataset]
+    path = dataset_dir(dataset)
     df = pd.read_csv(os.path.join(path, f"{split}.csv"))
     return df["sequence"].tolist(), df["label"].to_numpy()
 
