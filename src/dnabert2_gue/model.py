@@ -40,6 +40,14 @@ def load_model(device=None):
     return tok, model.to(device).eval()
 
 
+def scatter_padded(flat, mask):
+    """Scatter an unpadded (n_tokens, D) layer back to (B, T, D) by the bool mask."""
+    B, T = mask.shape
+    h = torch.zeros(B, T, flat.shape[-1], device=flat.device, dtype=flat.dtype)
+    h[mask] = flat
+    return h
+
+
 def embed_batch_layers(seqs, tok, model, max_length=512, device=None):
     """All 12 layers of one batch, pooled.
 
@@ -56,11 +64,9 @@ def embed_batch_layers(seqs, tok, model, max_length=512, device=None):
 
     m = attn.unsqueeze(-1).float()
     denom = m.sum(dim=1)
-    B, T = mask.shape
     means, clss = [], []
     for flat in layers:
-        h = torch.zeros(B, T, flat.shape[-1], device=flat.device, dtype=flat.dtype)
-        h[mask] = flat
+        h = scatter_padded(flat, mask)
         means.append(((h.float() * m).sum(dim=1) / denom).cpu())
         clss.append(h[:, 0].float().cpu())
     return torch.stack(means), torch.stack(clss), attn.sum(dim=1).cpu().numpy()

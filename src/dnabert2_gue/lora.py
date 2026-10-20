@@ -34,12 +34,20 @@ Implementation notes (learned the hard way, do not rediscover):
   ``pool="cls-trained"`` and the sentinel ``layer=0``.
 """
 
+import datetime
+import glob
+import json
 import os
+import shutil
 import sys
 
+import numpy as np
 import pandas as pd
+import peft
 import torch
 import torch.nn as nn
+import transformers
+from huggingface_hub import snapshot_download
 from peft import LoraConfig, get_peft_model
 from peft.tuners.lora import LoraLayer
 from sklearn.metrics import matthews_corrcoef
@@ -51,6 +59,7 @@ from .config import (DATASET_TASK, dataset_dir, LORA_ALPHA, LORA_BATCH, LORA_DRO
                      LORA_MAX_EPOCHS, LORA_MAX_LENGTH, LORA_PATIENCE, LORA_R,
                      LORA_VARIANTS, LORA_WARMUP_RATIO, LORA_WEIGHT_DECAY,
                      MODEL_NAME, SPLITS, manifest)
+from .model import scatter_padded
 
 MODULES_TO_SAVE = ["classifier", "pooler"]
 
@@ -234,18 +243,130 @@ def evaluate(model, loader, device):
     return matthews_corrcoef(torch.cat(ys), torch.cat(preds))
 
 
+def predict_test(model, loader, device):
+    """Pass A: logits and pooler output for ``loader``, in loader order.
+
+    The full model, pooler intact, under the same bf16 autocast as ``evaluate``
+    so these logits reproduce the reported test MCC. The pooler output is
+    captured with a forward hook.
+    """
+    bert = model.base_model.model.bert
+    pooled = []
+    hook = bert.pooler.register_forward_hook(
+        lambda _m, _i, out: pooled.append(out.detach().float().cpu()))
+    logits, ys = [], []
+    model.eval()
+    try:
+        with torch.no_grad(), _autocast(device):
+            for ids, mask, y in loader:
+                out = model(input_ids=ids.to(device), attention_mask=mask.to(device))[0]
+                logits.append(out.float().cpu())
+                ys.append(y)
+    finally:
+        hook.remove()
+    return (torch.cat(logits).numpy(), torch.cat(pooled).numpy(),
+            torch.cat(ys).numpy().astype(np.int64))
+
+
+def encoder_cls(model, loader, device):
+    """Pass B: final-layer position-0 hidden state, pre-pooler, in fp32.
+
+    This is what the frozen cache's ``cls`` feature is (``model.load_model``
+    nulls the pooler for the same reason), so the fine-tuned vector differs
+    from it only by fine-tuning. fp32 with no autocast, like the frozen cache.
+    The pooler is detached for the pass and restored afterwards, so the model
+    can still be merged and saved whole.
+    """
+    bert = model.base_model.model.bert
+    assert bert is not None and hasattr(bert, "encoder"), \
+        "peft wrapper layout changed: expected base_model.model.bert"
+    pooler, bert.pooler = bert.pooler, None
+    out = []
+    model.eval()
+    try:
+        with torch.no_grad():
+            for ids, mask, _y in loader:
+                ids, mask = ids.to(device), mask.to(device)
+                layers = bert(ids, attention_mask=mask,
+                              output_all_encoded_layers=True)[0]
+                out.append(scatter_padded(layers[-1], mask.bool())[:, 0].float().cpu())
+    finally:
+        bert.pooler = pooler
+    return torch.cat(out).numpy()
+
+
+def base_revision():
+    """Resolved HF commit of the base model, plus the library versions."""
+    sha = os.path.basename(snapshot_download(MODEL_NAME, local_files_only=True))
+    return {"base_model": MODEL_NAME, "base_revision": sha,
+            "peft": peft.__version__, "transformers": transformers.__version__,
+            "torch": torch.__version__}
+
+
+def _claim_dir(path, overwrite):
+    if os.path.isdir(path) and os.listdir(path) and not overwrite:
+        raise FileExistsError(f"{path} is not empty; pass overwrite to replace it")
+    os.makedirs(path, exist_ok=True)
+
+
+def save_run(model, run_dir):
+    """Adapter (peft's saver: includes the pooler and classifier) + provenance."""
+    model.save_pretrained(run_dir)
+    rev = base_revision()
+    with open(os.path.join(run_dir, "base_revision.json"), "w") as f:
+        json.dump(rev, f, indent=2)
+    return rev
+
+
+def save_merged(model, tok, run_dir):
+    """Standalone full model with the adapter folded in, for inference without peft.
+
+    Mutates ``model`` (merge_and_unload), so it must be the last thing done.
+    """
+    merged = model.merge_and_unload()
+    path = os.path.join(run_dir, "merged")
+    merged.save_pretrained(path)
+    tok.save_pretrained(path)
+    # save_pretrained copies only the config module; the remote modeling code
+    # (bert_layers.py etc.) must sit beside the weights for trust_remote_code.
+    snap = snapshot_download(MODEL_NAME, local_files_only=True)
+    for f in glob.glob(os.path.join(snap, "*.py")):
+        shutil.copy(f, path)
+    return path
+
+
+def _dump(model, loader, device, dump_dir, run_name, df_test, n_classes):
+    """Write the fine-tuned test arrays; returns provenance for the manifest."""
+    os.makedirs(dump_dir, exist_ok=True)
+    logits, pooled, y = predict_test(model, loader, device)
+    assert np.array_equal(y, df_test["label"].to_numpy()), "test row order changed"
+    cls = encoder_cls(model, loader, device)
+    for name, arr in (("cls", cls), ("pooled", pooled), ("logits", logits), ("y", y)):
+        assert np.isfinite(arr).all(), f"{run_name}: non-finite {name}"
+        np.save(os.path.join(dump_dir, f"{run_name}__test__{name}.npy"), arr)
+    return {"n_test": len(y), "n_classes": n_classes,
+            "dumped_at": datetime.datetime.now().isoformat(timespec="seconds")}
+
+
 def run_lora(dataset, seed, lr, variant="attn",
              r=LORA_R, alpha=LORA_ALPHA, lora_dropout=LORA_DROPOUT,
              batch_size=LORA_BATCH, max_epochs=LORA_MAX_EPOCHS,
              patience=LORA_PATIENCE,
              warmup_ratio=LORA_WARMUP_RATIO, weight_decay=LORA_WEIGHT_DECAY,
-             max_length=LORA_MAX_LENGTH, device=None, debug=False):
+             max_length=LORA_MAX_LENGTH, device=None, debug=False,
+             save_dir=None, dump_dir=None, overwrite=False):
     """One LoRA fine-tuning run; returns (result_dict, history).
 
     Mirrors ``mlp.run_mlp``: the result dict holds the ``RESULT_COLS`` columns
     except ``wall_s``, which the sweep attaches. No ``pool``/``layer`` argument
     -- fine-tuning has neither. ``device=None`` auto-detects; bf16 autocast is
     used only on CUDA, and ``precision`` records what actually ran.
+
+    ``save_dir`` persists the best-dev adapter and a merged standalone model
+    under ``<save_dir>/<dataset>__<variant>__s<seed>``; ``dump_dir`` writes the
+    fine-tuned test-set representations (see ``predict_test``/``encoder_cls``).
+    Both run after the single test evaluation, on the best-dev state, and add
+    provenance keys to the result dict.
     """
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     target_modules = LORA_VARIANTS[variant]
@@ -270,14 +391,29 @@ def run_lora(dataset, seed, lr, variant="attn",
     test_loader = DataLoader(SeqDataset(df_test), batch_size=batch_size * 2,
                              collate_fn=collate, num_workers=0)
 
+    run_name = f"{dataset}__{variant}__s{seed}"
+    run_dir = os.path.join(save_dir, run_name) if save_dir else None
+    if run_dir:
+        _claim_dir(run_dir, overwrite)     # fail before spending the GPU time
+
     model, info = build_lora_model(n_classes, target_modules, r, alpha, lora_dropout)
     model = model.to(device)
+    extra = {}
     try:
         model, dev_mcc, best_epoch, history, early_stopped = train_lora(
             model, train_loader, dev_loader, device, lr, epochs=max_epochs,
             patience=patience, warmup_ratio=warmup_ratio,
             weight_decay=weight_decay, debug=debug)
         test_mcc = evaluate(model, test_loader, device)   # scored once, best-dev state
+        if run_dir:
+            extra.update(base_revision=save_run(model, run_dir)["base_revision"],
+                         peft_version=peft.__version__,
+                         torch_version=torch.__version__, adapter_dir=run_dir)
+        if dump_dir:
+            extra.update(_dump(model, test_loader, device, dump_dir, run_name,
+                               df_test, n_classes))
+        if run_dir:
+            extra["merged_dir"] = save_merged(model, tok, run_dir)
     finally:
         del model
         if device.type == "cuda":
@@ -302,4 +438,5 @@ def run_lora(dataset, seed, lr, variant="attn",
         "optimizer": "AdamW",
         "precision": "bf16" if device.type == "cuda" else "fp32",
         "max_length": max_length, "eval_cadence": "per_epoch",
+        **extra,
     }, history

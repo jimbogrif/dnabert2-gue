@@ -42,7 +42,15 @@ Two modes:
 
 Both modes resume: a run is skipped if (dataset, seed, variant, lr) is already
 in the output CSV; rows are flushed every 20 runs. Adapter weights are not
-saved. Requires a CUDA GPU.
+saved unless ``--save-adapters DIR`` is given. Requires a CUDA GPU.
+
+``--save-adapters DIR`` persists each run's best-dev peft adapter (pooler and
+classifier included), ``base_revision.json`` and a merged standalone model
+under DIR/<dataset>__<variant>__s<seed>/. ``--dump-cls DIR`` writes that run's
+fine-tuned test-set arrays (final-layer position-0 hidden state, pooler output,
+logits, labels) and a manifest. Either flag redirects the rows and histories to
+``results/lora_results_rerun.csv`` / ``lora_histories_rerun.csv.gz`` (override
+with ``--out``) so the published sweep rows are never touched or skipped over.
 
 Then run 06_build_tables.py, which picks up lora_results.csv.
 
@@ -70,6 +78,8 @@ CALIB = os.path.join(SL.RESULTS_DIR, "lora_calibration.csv")
 CALIB_HIST = os.path.join(SL.RESULTS_DIR, "lora_calibration_histories.csv.gz")
 OUT = os.path.join(SL.RESULTS_DIR, "lora_results.csv")
 HIST = os.path.join(SL.RESULTS_DIR, "lora_histories.csv.gz")
+RERUN = os.path.join(SL.RESULTS_DIR, "lora_results_rerun.csv")
+RERUN_HIST = os.path.join(SL.RESULTS_DIR, "lora_histories_rerun.csv.gz")
 FIG = os.path.join(SL.FIGURES_DIR, "lora_calibration.png")
 CALIB_SEED, CALIB_VARIANT = 42, "attn"
 
@@ -80,6 +90,17 @@ ap.add_argument("--lrs", type=float, nargs="+", default=list(SL.LORA_CALIB_LRS),
 ap.add_argument("--lr", type=float, help="calibrated lr (full mode)")
 ap.add_argument("--variant", choices=["attn", "attn_mlp", "both"], default="both")
 ap.add_argument("--debug", action="store_true", help="print per-epoch progress")
+ap.add_argument("--seeds", type=int, nargs="+", default=list(SL.LORA_SEEDS),
+                help="full-mode seeds")
+ap.add_argument("--save-adapters", metavar="DIR", default=None,
+                help="persist adapter + merged model per run under DIR")
+ap.add_argument("--dump-cls", metavar="DIR", default=None,
+                help="write fine-tuned test-set representations under DIR")
+ap.add_argument("--overwrite", action="store_true",
+                help="replace a non-empty adapter directory")
+ap.add_argument("--out", default=None,
+                help="full-mode results CSV (default: lora_results.csv, or "
+                     "lora_results_rerun.csv with --save-adapters/--dump-cls)")
 ap.add_argument("--datasets", nargs="+", default=None,
                 help="default: the 26 in-scope datasets. Others (e.g. "
                      "splice__reconstructed) are appended to the same "
@@ -96,6 +117,25 @@ if not torch.cuda.is_available():
 
 def key(d, s, v, lr):
     return (d, int(s), v, float(lr))
+
+
+MANIFEST_COLS = ["dataset", "variant", "seed", "lr", "n", "n_classes", "dev_mcc",
+                 "test_mcc", "best_epoch", "epochs_run", "early_stopped",
+                 "adapter_dir", "base_revision", "peft_version", "torch_version",
+                 "wall_s", "dumped_at"]
+
+
+def write_manifest(res):
+    """Upsert this run's row into <dump-cls>/lora_cls_manifest.csv."""
+    path = os.path.join(args.dump_cls, "lora_cls_manifest.csv")
+    row = {**res, "n": res["n_test"]}
+    new = pd.DataFrame([{c: row.get(c) for c in MANIFEST_COLS}])
+    if os.path.exists(path):
+        old = pd.read_csv(path)
+        k = ["dataset", "variant", "seed", "lr"]
+        old = old[~old[k].apply(tuple, axis=1).isin(new[k].apply(tuple, axis=1))]
+        new = pd.concat([old, new], ignore_index=True)
+    new[MANIFEST_COLS].to_csv(path, index=False)
 
 
 def run_plan(plan, out, hist_path=None):
@@ -121,9 +161,13 @@ def run_plan(plan, out, hist_path=None):
         if key(d, s, v, lr) in done:
             continue
         t0 = time.time()
-        res, hist = SL.run_lora(d, s, lr, variant=v, debug=args.debug)
+        res, hist = SL.run_lora(d, s, lr, variant=v, debug=args.debug,
+                                save_dir=args.save_adapters, dump_dir=args.dump_cls,
+                                overwrite=args.overwrite)
         res["wall_s"] = round(time.time() - t0, 1)
         rows.append(res)
+        if args.dump_cls:
+            write_manifest(res)
         n_new += 1
 
         h = pd.DataFrame(hist)
@@ -224,8 +268,13 @@ def full():
     plan = [(d, s, v, args.lr)
             for d in datasets
             for v in variants
-            for s in SL.LORA_SEEDS]
-    run_plan(plan, OUT, HIST)
+            for s in args.seeds]
+    out, hist = OUT, HIST
+    if args.save_adapters or args.dump_cls:
+        out, hist = RERUN, RERUN_HIST
+    if args.out:
+        out, hist = args.out, args.out.replace(".csv", "_histories.csv.gz")
+    run_plan(plan, out, hist)
 
 
 if args.mode == "calibrate":

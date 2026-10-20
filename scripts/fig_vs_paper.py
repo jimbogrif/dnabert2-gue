@@ -77,8 +77,10 @@ def add_ssp(d, results_dir):
 def load(results_dir):
     d = pd.read_csv(results_dir / "best_frozen_vs_paper.csv")
     d = add_ssp(d, results_dir)
-    # 'prom__prom_core_tata' -> 'prom_core_tata'; 'mouse__3' -> '3'
-    d["label"] = d["dataset"].str.split("__", n=1).str[-1]
+    # 'prom__prom_core_tata' -> 'core_tata'; 'mouse__3' -> '3'
+    d["label"] = (d["dataset"].str.split("__", n=1).str[-1]
+                  .str.removeprefix("prom_"))
+    d.loc[d["task"] == "SSP", "label"] = "SSP"
     d["task"] = pd.Categorical(d["task"], categories=TASKS, ordered=True)
     # y grows upward, so lay the groups out in reverse display order (EMP first,
     # lowest) to put CPD at the top; within a group the lowest paper score goes
@@ -95,9 +97,12 @@ def draw(d):
     y, ticks, labels, group_top = 0.0, [], [], {}
     for task, g in d.groupby("task", observed=True, sort=False):
         for _, r in g.iterrows():
-            ticks.append(y)
+            # SSP is a lone row at the bottom, where its dumbbell would sit on
+            # the group's own label; nudge it down out of the way.
+            yy = y - 0.4 if task == "SSP" else y
+            ticks.append(yy)
             labels.append(r["label"])
-            d.loc[r.name, "_y"] = y
+            d.loc[r.name, "_y"] = yy
             y += 1.0
         group_top[task] = y - 0.5
         y += 1.0
@@ -149,7 +154,7 @@ def draw(d):
                    label="DNABERT-2 fine-tuned (paper Table 6)"),
     ]
     # Below the axes, not inside: the bottom-right corner now holds the SSP row.
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.045),
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.08),
               ncol=2, frameon=False, fontsize=10)
 
     # A single mean hides the point once SSP is in: it sits ~20 points below the
@@ -158,18 +163,22 @@ def draw(d):
     pct = d["pct_of_paper"]
     rest = d.loc[d["task"] != "SSP", "pct_of_paper"]
     ssp = d.loc[d["task"] == "SSP", "pct_of_paper"]
-    if len(ssp):
-        line2 = (f"splice site prediction is {ssp.iloc[0]:.1f}%; the other "
-                 f"{len(rest)} datasets span {rest.min():.1f}\u2013{rest.max():.1f}%")
-        line1 = (f"Frozen DNABERT-2 embeddings reach {pct.mean():.1f}% of the "
-                 "fine-tuned score on average \u2014 but not on splice")
-    else:
-        line1 = (f"Frozen DNABERT-2 embeddings reach {pct.mean():.1f}% of the "
-                 "fine-tuned score on average")
-        line2 = (f"range {pct.min():.1f}\u2013{pct.max():.1f}%; best config per "
-                 "dataset chosen on dev, test reported once")
+    # skip all this:
+    # if len(ssp):
+    #     line2 = (f"splice site prediction is {ssp.iloc[0]:.1f}%; the other "
+    #              f"{len(rest)} datasets span {rest.min():.1f}\u2013{rest.max():.1f}%")
+    #     line1 = (f"Frozen DNABERT-2 embeddings reach {pct.mean():.1f}% of the "
+    #              "fine-tuned score on average \u2014 but not on splice")
+    # else:
+    #     line1 = (f"Frozen DNABERT-2 embeddings reach {pct.mean():.1f}% of the "
+    #              "fine-tuned score on average")
+    #     line2 = (f"range {pct.min():.1f}\u2013{pct.max():.1f}%; best config per "
+    #              "dataset chosen on dev, test reported once")
+    line1 = "Frozen embeddings track full fine-tuning regardless of difficulty"
+    line2 = "On splice site prediction the embedding approach fails"
     fig.suptitle(f"{line1}\n{line2}", fontsize=12.5, x=0.5, y=0.985)
-    fig.tight_layout(rect=(0, 0, 1, 0.955))
+    fig.tight_layout(rect=(0, 0, 1, 1.0))
+    fig.subplots_adjust(top=0.91)  # tight_layout leaves a gap under the suptitle
     return fig
 
 

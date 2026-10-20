@@ -1,0 +1,3 @@
+dataset,variant,seed,lr,n,n_classes,dev_mcc,test_mcc,best_epoch,epochs_run,early_stopped,adapter_dir,base_revision,peft_version,torch_version,wall_s,dumped_at
+prom__prom_300_all,attn,42,0.001,5920,2,0.8847984829354159,0.8692521198585177,5,10,True,checkpoints/lora/prom__prom_300_all__attn__s42,7bce263b15377fc15361f52cfab88f8b586abda0,0.21.2,2.7.1+cu126,578.3,2026-10-19T18:05:54
+splice__reconstructed,attn,42,0.001,4562,3,0.8693153505748044,0.8602474790752186,17,22,True,checkpoints/lora/splice__reconstructed__attn__s42,7bce263b15377fc15361f52cfab88f8b586abda0,0.21.2,2.7.1+cu126,1301.4,2026-10-19T18:27:35

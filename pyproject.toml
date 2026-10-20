@@ -9,11 +9,15 @@ dependencies = [
     "transformers==4.57.6",
     "scikit-learn==1.9.1",
     "peft==0.21.2",
+    "einops==0.8.2",
+    "umap-learn==0.5.12",
+    "huggingface-hub",
     "numpy",
     "pandas",
     "joblib",
     "matplotlib",
     "seaborn",
+    "logomaker",
 ]
 
 [build-system]
